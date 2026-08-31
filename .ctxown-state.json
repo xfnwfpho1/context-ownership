@@ -1,0 +1,14 @@
+{
+  "provider": {
+    "provider": "openrouter",
+    "key_alias": "primary",
+    "model": "openrouter/z-ai/glm-5.3-flash",
+    "chain": [
+      "openrouter/z-ai/glm-5.3-flash",
+      "openrouter/minimax/minimax-m3:free",
+      "openrouter/dots-studio/dots-3-note-preview:free",
+      "zai/glm-4-plus"
+    ],
+    "at": 1788131011.059945
+  }
+}
