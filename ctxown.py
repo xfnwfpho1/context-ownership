@@ -595,11 +595,35 @@ def cmd_init(args):
     if not docs_root.is_dir():
         fail(f"docs/ dir not found under corpus: {docs_root_dir_hint()}")
 
+    # Real-tree hygiene (found via the hermes-agent-spine-research dry run):
+    # 1. dot-directories (.agents/, .github/, .opencode/...) are agent/harness
+    #    config, not corpus documents — they are not ownable artifacts.
+    # 2. real trees have duplicate filenames (SKILL.md at two depths) — a bare
+    #    stem collides as an owner id, making the second owner unreachable.
+    #    Disambiguate structurally: prefix the parent path (readable,
+    #    still tree-derived, still deterministic).
+    all_docs = [md for md in sorted(docs_root.rglob("*.md"))
+                if not any(part.startswith(".")
+                           for part in md.relative_to(CORPUS_DIR).parts[:-1])]
+    stem_counts = {}
+    for md in all_docs:
+        stem_counts[md.stem] = stem_counts.get(md.stem, 0) + 1
+
     owners = []
     idx = 0
-    for md in sorted(docs_root.rglob("*.md")):
+    seen_ids = set()
+    for md in all_docs:
         rel = md.relative_to(CORPUS_DIR).as_posix()
         oid = md.stem  # structural: file name is the owner id
+        if stem_counts[md.stem] > 1:
+            parent = os.path.dirname(rel)
+            prefix = parent.replace("docs/", "").replace("docs", "").replace("/", "-").strip("-")
+            oid = f"{prefix}-{md.stem}" if prefix else md.stem
+        base, k = oid, 2
+        while oid in seen_ids:
+            oid = f"{base}-{k}"
+            k += 1
+        seen_ids.add(oid)
         owners.append({
             "id": oid,
             "name": oid.replace("-", " ").replace("_", " ").title(),
