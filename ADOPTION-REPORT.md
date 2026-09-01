@@ -91,6 +91,50 @@ new `findings-*.md` broadcast to all 63 owners — "does this contradict
 anything we've measured or decided?" — is precisely the absence question
 (§1.2) that no grep over 361K tokens can answer with coverage.
 
+## 6a. Execution log — the real deployments, driven live (2026-09-01)
+
+**Hermes: from dry run to full production deployment.**
+- Real glossary authored (70+ terms extracted from the corpus itself, value
+  owners + precedence rules) — the single highest-leverage artifact; every
+  bundle now carries shared vocabulary.
+- Full LLM build: **64/64 derived layers compiled clean in 121.5 min at 2
+  parallel workers** (found + fixed R15/R15b first — see below).
+- Serving + stress at 2x pilot scale: **63/63 concurrent owner asks in
+  25.8s wall**; full 63-owner review board (benign diff) **856s at 12-way
+  concurrency, 0 transport errors, 0 false positives, self-invalidation
+  refusal fired correctly**.
+- The 3-arm planted eval (sharded vs coldgrep vs chunk-RAG, 10 plants
+  authored against the corpus's real facts) — results in §6b.
+
+**cc-gha-exploration: the second real corpus, staged.**
+- 45 owners / 228K tokens (worklog.md, mcp-web/vendor/**, dot-dirs excluded),
+  ports 4400+, corpus check clean. One real-messiness artifact found: an
+  EMPTY doc (`review/round-2/cc-self-review.md`, 0 bytes) — flagged by the
+  micro-doc check, still owned (correct: it is in the tree).
+- Real glossary authored (48 terms, including the corpus's OWN stated
+  precedence rule: design docs defer to validation docs).
+- Deterministic build done; LLM build queued (one evening of provider budget).
+
+**Defects only real scale could surface (all fixed + regression-tested):**
+- R15: 120s derived-layer timeout clipped legitimately-slow compiles into
+  retry churn (the pilot's 1.6K-token docs never hit it; hermes' 5-25K-token
+  docs did). Timeout + truncation are now corpus-scale parameters.
+- R15b: `--workers N` parallel build (per-owner mutation surfaces are
+  disjoint; the build holds the single-writer lock for the whole command).
+- R15c: the eval's review board now scales wall-clock and worker count with
+  fleet size (a fixed 2400s/3-worker pair would clip a 64-owner board).
+- R15d: squad compressions in hierarchical aggregation parallelized.
+- R15e: an extraction leftover (COV_DIR) killed the layer's FIRST-ever eval
+  run — subprocess-argv paths need tests that resolve every global (T27).
+
+## 6b. The hermes 3-arm eval — the §1.4 detection-edge experiment at 6x scale
+
+(corpus: 339K tokens / 64 owners — far beyond one competent flash-tier
+window, and nobody hand-designed it for the model; 10 plants authored
+against the corpus's real decisions/findings)
+
+(RESULTS PENDING — eval in flight)
+
 ## 6. Recommended sequencing
 
 1. **Author the real glossary** for hermes (the highest-leverage artifact,
