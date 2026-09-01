@@ -2840,7 +2840,7 @@ def run_review_quiet(registry, changed_file, base, review_timeout=None,
                             "review", "--file", changed_file,
                             "--base", base, "--timeout", str(per_ask_timeout),
                             "--concurrency", str(workers)],
-                           capture_output=True, text=True, cwd=str(COV_DIR),
+                           capture_output=True, text=True, cwd=str(PROJECT_DIR),
                            timeout=review_timeout, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"review timed out after {review_timeout}s",

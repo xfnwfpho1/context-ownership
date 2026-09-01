@@ -622,6 +622,43 @@ try:
            "quote": "The API rate limit of 100 requests per minute applies per tenant"}
     miss = {"ok": True, "contradicts": True, "quote": "Invoices are retained for 7 years"}
     fp_shape = {"ok": True, "contradicts": False, "quote": ""}
+
+    # T27 (regression, found live by the first hermes eval): run_review_quiet
+    # builds its subprocess command from module globals — an extraction
+    # leftover (COV_DIR, a cov.py name) raised NameError on the FIRST real
+    # layer eval run. Intercept subprocess.run, resolve every global the
+    # function touches, and check the spawned argv references the CURRENT
+    # project (both --project and cwd must resolve; a wrong cwd silently
+    # reviews the wrong corpus).
+    print("== T27: run_review_quiet subprocess command resolves (no COV_DIR-style leftovers) ==")
+    import ctxown as _cov_mod
+    captured = {}
+    class _FakeCompleted:
+        returncode = 0
+        stdout = '{"ok": true, "owners_queried": 1, "report": {"findings": [], "finding_count": 0}}'
+        stderr = ""
+
+    def _fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["cwd"] = kw.get("cwd")
+        captured["timeout"] = kw.get("timeout")
+        return _FakeCompleted()
+
+    _orig_run = _cov_mod.subprocess.run
+    _cov_mod.subprocess.run = _fake_run
+    try:
+        fake_reg = {"owners": [{"id": "x", "kind": "leaf"} for _ in range(70)]}
+        out = _cov_mod.run_review_quiet(fake_reg, "docs/product-overview.md", "deadbeef")
+        check("run_review_quiet returns parsed review", out is not None and out.get("ok") is True)
+        check("subprocess argv carries --project for the CURRENT project",
+              str(_cov_mod.PROJECT_DIR) in " ".join(captured["cmd"]))
+        check("subprocess cwd resolves (no undefined COV_DIR)",
+              captured["cwd"] is not None and str(_cov_mod.PROJECT_DIR) == str(captured["cwd"]))
+        check("wall timeout scales with fleet size (70 leaves > pilot 35)",
+              (captured["timeout"] or 0) > 2400)
+    finally:
+        _cov_mod.subprocess.run = _orig_run
+
     check("rag_detects: overlapping quote counts", cov.rag_detects(hit, plant_t26) is True)
     check("rag_detects: non-overlapping quote does not count", cov.rag_detects(miss, plant_t26) is False)
     check("rag_detects: no-contradiction answer is not a detection", cov.rag_detects(fp_shape, plant_t26) is False)
