@@ -2290,10 +2290,26 @@ def hierarchical_aggregate(results, registry, oc_run_fn=None):
         squads.setdefault(parent, []).append(f)
     audit = {"squads": {}, "never_sampled": True}
     final_findings = []
-    for parent, finds in sorted(squads.items()):
+    # R15d: squad compressions are independent per parent dir — parallelize
+    # them (sequential at hermes scale = 3-5 cold oc_run calls stacked on the
+    # review's critical path; found live when the 64-owner smoke review blew
+    # past a 590s bash cap on a slow provider day). map() preserves order.
+    squad_items = sorted(squads.items())
+
+    def compress_squad(item):
+        parent, finds = item
         comp = compress_group(parent, finds, oc_run_fn)
+        return parent, len(finds), comp
+
+    if len(squad_items) > 1 and oc_run_fn is None:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(squad_items))) as pool:
+            comps = list(pool.map(compress_squad, squad_items))
+    else:
+        comps = [compress_squad(it) for it in squad_items]
+    for parent, n_raw, comp in comps:
         audit["squads"][parent] = {
-            "raw": len(finds), "out": len(comp["findings"]),
+            "raw": n_raw, "out": len(comp["findings"]),
             "compressed": comp.get("compressed", False),
             "conservation_violation": comp.get("conservation_violation", False),
             "compressor_output_quotes": comp.get("compressor_output_quotes"),
