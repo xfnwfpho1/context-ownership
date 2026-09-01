@@ -80,21 +80,32 @@ README.
 
 ## Untested dev scenarios — the honest list
 
+Updated 2026-09-01 (real-scale round): items 1 and 4 are now DONE — the
+3-arm eval ran on the REAL hermes corpus (10 plants, 64 owners, 339K
+tokens — 6x the pilot, nobody hand-designed the corpus for the model), and
+the second real deployment (cc-gha-exploration, 45 owners / 228K tokens)
+is staged with glossary + registry + no-llm bundles. R15/R15b/R15c/R15d
+were all defects only real scale could surface (build timeout calibration,
+doc truncation ceiling, review-board concurrency scaling, squad
+compression parallelism).
+
 What we have NOT run yet, ranked by value:
 
-1. **The full 3-arm eval** (sharded vs coldgrep vs chunk-RAG over all 19
-   plants) — completes §8.6 exactly as specified. The machinery is ready.
+1. ~~The full 3-arm eval~~ **DONE (2026-09-01)** — on the real hermes
+   corpus (results in ADOPTION-REPORT.md); the pilot-corpus 19-plant sweep
+   remains optional.
 2. **Bundle-vs-coldgrep QA benchmark** — the §11 go/no-go experiment the
    contradiction eval does not cover.
 3. **Build-loss audit** — the only way to see the failure serving owners
    are blind to (§3.4). One evening of work.
-4. **A second real deployment** (Phase 2 of the project plan): the layer
-   pointed at a real repo's doc tree, with the fit classifier deciding what
-   is ownable (see ADOPTION-REPORT.md).
+4. ~~A second real deployment~~ **DONE** — hermes (live, evaluated) +
+   cc-gha (staged: corpus + glossary + registry; LLM build pending).
 5. **Registry churn under live edits** — add/retire docs mid-flight, watch
    `check` catch drift and `init`+`rebuild` heal it ([T24] covers the
    mechanics; a live churn drill has not run).
 6. **Co-change mining + tree diff** (§2.2) — the refactoring-backlog signal.
+7. **cc-gha full LLM build + eval** — the second real corpus through the
+   same ladder (glossary authored; build is one evening of provider budget).
 
 ## Verdict
 
