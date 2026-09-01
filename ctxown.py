@@ -2792,7 +2792,7 @@ def cmd_eval(args):
                    else "BASELINES_WIN"))})
 
 
-def run_review_quiet(registry, changed_file, base, review_timeout=2400,
+def run_review_quiet(registry, changed_file, base, review_timeout=None,
                     per_ask_timeout=300):
     """R12: bounded review — subprocess.run with a hard wall-clock cap so a
     hung review can never block the eval forever (the previous version had
@@ -2806,11 +2806,24 @@ def run_review_quiet(registry, changed_file, base, review_timeout=2400,
     and the 600s wall then killed every plant. Current: 2400s wall, 300s
     per-ask — owner asks are multi-round agent loops (measured up to ~10
     LLM rounds per owner), and the zai proxy's token bucket paces upstream
-    requests at ~0.3/s, so a full board review legitimately takes minutes."""
+    requests at ~0.3/s, so a full board review legitimately takes minutes.
+    R15c (64-owner hermes fleet): the wall clock and the worker count now
+    SCALE with fleet size instead of assuming the 35-owner pilot — a fixed
+    2400s/3-worker pair would clip a 64-owner board on a slow provider day
+    (measured: flash compiles ran ~290s; owner asks ride the same provider).
+    Wall = max(2400, owners * per_ask / workers * 1.5); workers default 6
+    (the 35-way concurrent blast proved the shared server's headroom; 3 was
+    a 4 GiB-RAM guess, but asks are server-multiplexed threads, not
+    processes). Env-tunable: CTXOWN_REVIEW_CONCURRENCY."""
+    n_owners = max(1, sum(1 for o in registry["owners"] if o.get("kind") == "leaf"))
+    workers = max(1, int(os.environ.get("CTXOWN_REVIEW_CONCURRENCY", "6") or 6))
+    if review_timeout is None:
+        review_timeout = max(2400, int(n_owners * per_ask_timeout / workers * 1.5))
     try:
         r = subprocess.run([sys.executable, __file__, "--project", str(PROJECT_DIR),
                             "review", "--file", changed_file,
-                            "--base", base, "--timeout", str(per_ask_timeout)],
+                            "--base", base, "--timeout", str(per_ask_timeout),
+                            "--concurrency", str(workers)],
                            capture_output=True, text=True, cwd=str(COV_DIR),
                            timeout=review_timeout, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
