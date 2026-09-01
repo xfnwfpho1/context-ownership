@@ -116,8 +116,11 @@ See ADOPTION-REPORT.md for this applied to a real repo tree.
 |---|---|---|
 | Single-owner ask | ~2.5-8s, ~$0.001 | ~300ms + heavy rate window |
 | Full 34-owner board | 470-530s wall | ~20 min at trickle pace |
-| Eval v9 (7 plants + FP) | ~3h, ~$1.30 total | ~2-3h (rate-bound) |
-| Rate behavior | 3 concurrent safe | 429s after ~100-150 req/45min; retries are traffic too |
+| **63-owner blast (hermes, 2x pilot)** | **63/63 ok in 25.8s wall, p50 22s** | (not attempted) |
+| **Full 63-owner review board (hermes)** | **856s wall at 12-way concurrency, 0 transport errors** | (not attempted) |
+| **Full 64-owner LLM build (hermes, 339K tokens)** | **121.5 min at 2 workers (~2.3 min/owner effective; large-doc compiles 150-290s each)** | (not attempted) |
+| Eval v9 (7 plants + FP, pilot) | ~3h, ~$1.30 total | ~2-3h (rate-bound) |
+| Rate behavior | 12-way review concurrency proven clean; blast 63-way once | 429s after ~100-150 req/45min; retries are traffic too |
 
 Operational rules that fell out of measurement:
 
@@ -130,3 +133,15 @@ Operational rules that fell out of measurement:
 3. Provider death must fail loudly and structurally (R14: probe → chain →
    honest abort), never as silent zeros — eval v8's entire sharded arm
    once recorded 0/34 on a dead key that looked like "no findings".
+4. Build-time timeouts must be sized for the LARGEST doc you own, not the
+   average (R15): a 120s derived-layer timeout clipped legitimately-slow
+   ~150-290s compiles into retry churn — the chain then burned 3 timeouts
+   per owner before a fallback landed. Timeout and truncation ceilings are
+   corpus-scale parameters now (420s / 120K chars).
+5. Never hard-kill a review in flight (R15e, found live): a bash-capped
+   smoke review left the shared opencode server in a NEW poison state —
+   HTTP 500 on EVERY model ("Unexpected server error", opaque ref ids)
+   while the provider itself was fine. Verified restart (kill by port,
+   wait for free, fresh start, single-ask probe) resolves it. This is a
+   third poison signature alongside empty-200s (hot-reload) and empty-200s
+   (keyless).
