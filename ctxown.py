@@ -820,8 +820,16 @@ def build_owner_bundle(owner, registry, docs, use_llm=True):
     derived = None
     derived_ok = True
     if use_llm:
-        ok, text, _ = oc_run(derived_layer_prompt(owner, core_text[:60000]),
-                             timeout=120)
+        # R15 (found on the real hermes corpus): the pilot's 120s timeout
+        # clipped LEGITIMATELY-SLOW large-doc compiles mid-generation — the
+        # chain then retried as "failures" (owner churn: 3 x 120s SIGTERM
+        # before a fallback landed). A full ~25K-token doc compiles in
+        # ~150-250s on flash-tier. 420s headroom; truncation raised 60K->
+        # 120K chars (three real docs silently lost their derived coverage
+        # at 60K; 120K chars ~ 30K tokens still fits the 64K window with
+        # max_tokens headroom).
+        ok, text, _ = oc_run(derived_layer_prompt(owner, core_text[:120000]),
+                             timeout=420)
         if ok and text.strip():
             derived = text.strip()
         else:
@@ -1005,15 +1013,32 @@ def cmd_build(args):
         fail(f"unknown owner: {args.owner} (see cov.py owners)", 3)
     built = []
     agents_changed = []
-    for o in targets:
+
+    def build_one(o):
         m = build_owner_bundle(o, registry, docs, use_llm=not args.no_llm)
         # corpus.sha advances ONLY after a successful rebuild (§6.1)
         (BUNDLES_DIR / o["id"] / "corpus.sha").write_text(corpus_sha() or "")
         if generate_owner_agent(o):
             agents_changed.append(o["id"])
-        built.append({"owner": o["id"], "core_bytes": m["core_bytes"],
-                      "bundle_bytes": m["bundle_bytes"],
-                      "periphery_refs": len(m["periphery_inputs"])})
+        return {"owner": o["id"], "core_bytes": m["core_bytes"],
+                "bundle_bytes": m["bundle_bytes"],
+                "periphery_refs": len(m["periphery_inputs"])}
+
+    # R15b: optional build parallelism (--workers). The build holds the
+    # single-writer lock for the WHOLE command; per-owner mutation surfaces
+    # (bundles/<id>/, agents/cov-<id>.md, corpus.sha) are disjoint per owner,
+    # so N workers just overlap the oc_run waits (cold-process latency, not
+    # shared state). list.append under the GIL is atomic. map() preserves
+    # order. No live server may be running while agents are rewritten —
+    # hot-reload poisoning (restart_running_servers at the end handles the
+    # safe case: it verifies a fresh, unpoisoned listener).
+    workers = int(getattr(args, "workers", 1) or 1)
+    if workers > 1 and len(targets) > 1 and not args.no_llm:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            built = list(pool.map(build_one, targets))
+    else:
+        built = [build_one(o) for o in targets]
     # R6b: changed agent files under a live server = hot-reload poison; restart
     restarted = restart_running_servers() if agents_changed else []
     out_json({"ok": True, "built": built, "corpus_sha": corpus_sha(),
@@ -2925,6 +2950,8 @@ def main():
     b.add_argument("--owner", default=None)
     b.add_argument("--no-llm", action="store_true", help="skip derived-layer builder call")
     b.add_argument("--force", action="store_true", help="allow building on a dirty corpus tree (status still content-verifies)")
+    b.add_argument("--workers", type=int, default=1,
+                   help="parallel build workers (per-owner oc_run overlap; 1 = sequential, the default)")
 
     sub.add_parser("status", help="fleet coherence states")
     r = sub.add_parser("rebuild", help="incremental rebuild of stale bundles")
