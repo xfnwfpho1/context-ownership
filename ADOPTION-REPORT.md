@@ -129,11 +129,48 @@ anything we've measured or decided?" — is precisely the absence question
 
 ## 6b. The hermes 3-arm eval — the §1.4 detection-edge experiment at 6x scale
 
-(corpus: 339K tokens / 64 owners — far beyond one competent flash-tier
-window, and nobody hand-designed it for the model; 10 plants authored
-against the corpus's real decisions/findings)
+Corpus: 339K tokens / 64 owners — far beyond one competent flash-tier
+window, and nobody hand-designed it for the model. 10 plants authored
+against the corpus's REAL decisions/findings (RPO cadence, benchmark
+counts, compaction thresholds, pin version, watchdog drop rate, cost
+figures, tail-protection mechanics, free-model memory policy, LRU cache).
+All three arms on openrouter/z-ai/glm-5.3-flash, both main arms model-
+pinned, honest-abort semantics active.
 
-(RESULTS PENDING — eval in flight)
+**RESULT (2026-09-02, wall 6.2h, restored clean, FP 0):**
+
+| arm | detections |
+|---|---|
+| sharded (63-owner board, hierarchical aggregation) | **10/10** |
+| coldgrep (one agent + grep over the whole corpus) | **10/10** |
+| chunk-RAG (BM25 top-8, no tools) | **8/10** |
+
+Verdict: **TIE between the two full architectures; chunk-RAG loses 2.**
+Per-plant wall 32-41 min (slow-provider day; the board itself ~14-18 min).
+Finding volume per plant: 5-44 POST-aggregation findings — the
+broadcast-to-all design surfaces massive redundancy; multiple owners flag
+the same drift (e.g. the pin-version plant drew 44 findings).
+
+**What this says about the model doc's §1.4 claim — honestly:**
+- The detection edge did NOT manifest as a rate advantage here. On a real,
+  cross-referenced, glossary-anchored corpus, realistic drift carries
+  lexical bridges, and a grep-equipped 128K-context agent follows them.
+  Every plant's authority was findable by grep; coldgrep found them all.
+- The RAG arm's 2 misses (P-H01 RPO, P-H02 benchmark count) are the clean
+  negative control: retrieval WITHOUT ownership knowledge does not know
+  where authority lives. Lexical top-8 missed the contradicting chunks.
+- The only sharded-unique catch on record remains the pilot's P17
+  (absence plant with NO lexical bridge — missed by coldgrep twice). This
+  round's absence attempt (P-H10, LRU) failed to be non-bridged: "LRU" is
+  a greppable token. **The decisive §1.4 experiment now needs
+  non-bridged plants** — semantic-only contradictions whose authority
+  document shares no distinctive token with the planted text. That is a
+  plant-authoring discipline, not a machinery gap.
+- The ownership model's demonstrated value on real corpora so far is NOT
+  raw detection rate — it is: authority locality (P17), the staleness
+  guarantee (self-invalidation fired live), the write ladder, and bounded
+  per-owner context economics. Detection-rate parity with a much simpler
+  baseline is itself the honest headline for a 6x-scale real corpus.
 
 ## 6. Recommended sequencing
 
