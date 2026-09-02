@@ -2741,6 +2741,25 @@ def cmd_eval(args):
                                     if "rag" in arms else None),
                             "model": sel_now.get("model"),
                             "sharded_findings": len(review.get("report", {}).get("findings", [])) if review else 0})
+            # R15f: persist the RAW per-plant evidence (review JSON incl.
+            # per-owner findings + the RAG arm's quote/retrieval). The
+            # hermes eval lost all of this — scores only — leaving the
+            # pilot's P14 phenomenon (findings exist, quote-overlap scores
+            # 0) impossible to diagnose post-hoc. Raw evidence is what the
+            # scorer-failure analysis needs; it is tiny (KBs per plant).
+            try:
+                pdir = EVAL_DIR / "plants"
+                pdir.mkdir(parents=True, exist_ok=True)
+                (pdir / f"{p['id']}.json").write_text(json.dumps({
+                    "plant": p, "review": review,
+                    "review_detects": hit,
+                    "coldgrep": cold,
+                    "rag_raw": rag_res if "rag" in arms else None,
+                    "rag_detects": detections_rag.get(p["id"]) if "rag" in arms else None,
+                    "model": sel_now.get("model"),
+                }, indent=1))
+            except Exception:
+                pass  # evidence persistence must never abort the eval
             # restore immediately (also covered by the finally block)
             f.write_text(original)
             git_mut("add", "-A")
