@@ -86,6 +86,8 @@ python3 tests/test_ctxown.py   # deterministic, no LLM calls (74 checks;
 ctxown.py               the controller (single file, stdlib only)
 tests/test_ctxown.py    deterministic regression + capability suite
 examples/pilot/         pointer to the reference deployment
+ARCHITECTURE.md         the E2E system as it actually runs (components, flows, eval mechanics)
+RUNBOOK.md              operating procedures: cold start, servers, build, eval, failure playbook
 SPEC-COMPLIANCE.md      every spec section -> status -> evidence
 OPERATIONS.md           scale strategy: sleep/live, 100-1k docs, doc cutting
 ```
