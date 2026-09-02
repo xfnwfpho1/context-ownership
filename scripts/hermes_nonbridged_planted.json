@@ -1,0 +1,56 @@
+[
+ {
+  "id": "NP-1-bridge-cadence-units",
+  "file": "docs/TOKEN-AUDIT.md",
+  "category": "semantic-conversion",
+  "note": "TOKEN-AUDIT:172 states the job cadences in runs/day ('bridge 4x'); the authority lives in FLEET-GUIDE/glossary/HANDOFF as '(6h)' \u2014 grep('4x') and grep('6h') do not cross; the agent must convert 24h/6h = 4 runs/day != 2. Same-format restatement of the x-format exists nowhere else in the corpus.",
+  "find": "(monitor 12\u00d7 + digest 1\u00d7 + bridge 4\u00d7)",
+  "replace": "(monitor 12\u00d7 + digest 1\u00d7 + bridge 2\u00d7)",
+  "expect": "both arms must convert units; coldgrep path = grep('bridge')/'worklog-bridge' -> 6h statements"
+ },
+ {
+  "id": "NP-2-monitor-cadence-units",
+  "file": "docs/TOKEN-AUDIT.md",
+  "category": "semantic-conversion",
+  "note": "monitor 12x/day vs '(2h)' authority \u2014 same unit-conversion structure as NP-1 on the sibling value of the same line.",
+  "find": "(monitor 12\u00d7 + digest 1\u00d7 + bridge 4\u00d7)",
+  "replace": "(monitor 6\u00d7 + digest 1\u00d7 + bridge 4\u00d7)",
+  "expect": "conversion 2h -> 12 runs/day != 6; NOTE watchdog also runs 12x/day (E-O) \u2014 a real-world confusion hazard"
+ },
+ {
+  "id": "NP-3-worklog-bridge-bridged-control",
+  "file": "docs/FLEET-GUIDE.md",
+  "category": "value-contradiction",
+  "note": "POSITIVE CONTROL (classic bridged plant, replicates the prior eval's phenomenon): old value '6h' greppable -> glossary 'Cron job (6h)' + HANDOFF 'worklog-bridge 6h' + TOKEN-AUDIT 'bridge 4x' \u2014 direct same-unit restatements exist.",
+  "find": "- **worklog-bridge** (6h): digests new worklog entries into memory (position-tracked).",
+  "replace": "- **worklog-bridge** (12h): digests new worklog entries into memory (position-tracked).",
+  "expect": "both arms catch (grep '6h' / 'worklog-bridge'); a miss here would be a red flag about the run itself"
+ },
+ {
+  "id": "NP-4-digest-size-compiled-memory",
+  "file": "docs/TOKEN-AUDIT.md",
+  "category": "compiled-memory",
+  "note": "The 3,405-char digest size appears in exactly ONE corpus line and in NO other doc (incl. .agents/SKILL.md and glossary). The only pre-state record outside the diff is TOKEN-AUDIT's own preserved DERIVED layer ('memory digest: 3,405 chars'). Coldgrep has nothing to grep: expected honest miss. The sharded self-owner reviews with bundle(core=planted + derived=old) + diff.",
+  "find": "| memory digest | 3,405 chars | 3,405 chars | 0 |",
+  "replace": "| memory digest | 2,405 chars | 2,405 chars | 0 |",
+  "expect": "sharded: catch IF the self-owner consults its compiled index; coldgrep: structural miss. THE discriminating plant."
+ },
+ {
+  "id": "NP-5-statecopy-size-compiled-memory",
+  "file": "docs/EXPERIMENTS-LOG.md",
+  "category": "compiled-memory",
+  "note": "E-0's 51 MB copy size: unique corpus line, no second statement anywhere; echoed only in EXPERIMENTS-LOG's derived layer. Same structure as NP-4 in a different owner.",
+  "find": "state copied (51 MB incl. skills cache)",
+  "replace": "state copied (15 MB incl. skills cache)",
+  "expect": "sharded-only possible; coldgrep blind"
+ },
+ {
+  "id": "NP-6-cappressure-compiled-memory",
+  "file": "docs/EXPERIMENTS-LOG.md",
+  "category": "compiled-memory",
+  "note": "E-? 'hit 94% capacity' \u2014 measured cap-pressure fact, single corpus statement, derived-layer echo only. The semantic hook (memory cap 8000) is glossary-pinned but the 94% figure itself is not derivable from it.",
+  "find": "acknowledged + memory write (hit 94% capacity \u2014 real-world cap pressure observed)",
+  "replace": "acknowledged + memory write (hit 64% capacity \u2014 real-world cap pressure observed)",
+  "expect": "sharded-only possible; coldgrep blind"
+ }
+]
