@@ -110,9 +110,22 @@ What we have NOT run yet, ranked by value:
 ## Verdict
 
 Per the spec's own falsifiability rule (§8.6): the model is **not yet
-validated as a WIN** — eval v9 on flash-tier was a TIE (6-6) at ~55K
-tokens, with the sharded fleet uniquely catching P17 (an
-absence/inference plant both baselines missed twice). The corpus sits at
-the edge of one competent flash-tier window, exactly where §1.4 says the
-model starts to earn its complexity. The decisive experiments are queued
-above, not blocked on machinery.
+validated as a detection-rate WIN** — and at real scale the picture has
+sharpened. The pilot (55K tokens, v9): TIE 6-6 with the sharded fleet
+uniquely catching P17 (a non-bridged absence plant, missed by coldgrep
+twice). The real-corpus eval (339K tokens / 64 owners, 2026-09-02):
+**TIE at 10/10 for both architectures, 8/10 for chunk-RAG** — every
+realistic drift plant was detected by BOTH the fleet and the coldgrep
+agent (realistic drift carries lexical bridges; grep follows them), with
+0 false positives and clean restore. The chunk-RAG arm's 2 misses are
+the clean negative control: retrieval without ownership knowledge does
+not know where authority lives. The remaining decisive experiment for
+§1.4 is NON-BRIDGED plants (semantic-only contradictions whose authority
+doc shares no distinctive token with the planted text) — a plant-authoring
+discipline, not a machinery gap.
+
+Where the model HAS earned its complexity on the record so far: the
+P17-class unique catch, the live staleness guarantee (self-invalidation
+fired in the write ladder AND the review board), the §7.7 write path,
+and 64-owner serving at 2x the pilot's proven scale (63/63 blast in
+25.8s; full board 856s).
