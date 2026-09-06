@@ -1071,7 +1071,18 @@ def cmd_build(args):
         built = [build_one_wrapped((i, o)) for i, o in enumerate(targets)]
     # R6b: changed agent files under a live server = hot-reload poison; restart
     restarted = restart_running_servers() if agents_changed else []
+    # UT-2 finding: the build log never said WHICH provider/model served it.
+    # Report the recorded selection ONLY (state file or module cache — never
+    # a fresh probe: the deterministic suite runs builds with no network).
+    provider_info = {}
+    try:
+        _sel = (_PROVIDER_SELECTION or {}) or (load_state() or {}).get("provider") or {}
+        provider_info = {k: _sel.get(k) for k in ("provider", "key_alias", "model")
+                         if _sel.get(k)}
+    except Exception:
+        pass
     out_json({"ok": True, "built": built, "corpus_sha": corpus_sha(),
+              **({"provider": provider_info} if provider_info else {}),
               **({"agents_changed": agents_changed,
                   "servers_restarted": restarted} if agents_changed else {})})
 

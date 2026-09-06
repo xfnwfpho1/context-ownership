@@ -19,7 +19,8 @@ two demo plants exploit exactly that structure.
 CTXOWN=/home/z/my-project/context-ownership/ctxown.py
 
 # 1. Copy the template OUT of the layer repo and make it a git project
-#    (a project is any dir with corpus/ inside a git repo).
+#    (a project is any dir with corpus/ inside a git repo). Choose a
+#    FRESH directory name — don't reuse one from an earlier walkthrough.
 cp -r /home/z/my-project/context-ownership/examples/demo \
       /home/z/my-project/aurora-demo
 cd /home/z/my-project/aurora-demo
