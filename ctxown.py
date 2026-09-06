@@ -141,6 +141,31 @@ SHARED_DIR = BUNDLES_DIR / "_shared"
 # --- Config ---
 DEFAULT_MODEL = os.environ.get("COV_MODEL", "openrouter/z-ai/glm-5.3-flash")
 BASE_PORT = int(os.environ.get("COV_BASE_PORT", "4200"))
+
+
+def registry_base_port(registry=None):
+    """The project's RECORDED base port (registry['base_port'], else the
+    root owner's port, else the env default for legacy registries).
+
+    UT-4 finding (found live by a blind usability round): the shared
+    server used the CURRENT shell's COV_BASE_PORT instead of the
+    registry — a project deployed on 4600 restarted onto 4200 from a
+    bare shell (collision risk with the flagship range), serve status
+    misreported the shared summary, and serve stop missed the actual
+    listener. Ports are a recorded PROJECT property: COV_BASE_PORT
+    assigns the range at INIT time only; every later command uses the
+    recorded range."""
+    try:
+        reg = registry if registry is not None else load_registry()
+        bp = reg.get("base_port")
+        if bp:
+            return int(bp)
+        root = next((o for o in reg.get("owners", []) if o.get("id") == "root"), None)
+        if root and root.get("port"):
+            return int(root["port"])
+    except Exception:
+        pass
+    return BASE_PORT
 OC_TOOL = os.environ.get("OC_TOOL", str(KIT_DIR / "oc-tool.py"))
 
 STATE_FILE = _state_file_for(PROJECT_DIR)   # serving state (ports, pids)
@@ -423,9 +448,10 @@ def ensure_provider():
     record_provider(sel)
     running = []
     seen_ports = set()
-    if server_healthy(BASE_PORT):
-        running.append(("shared", BASE_PORT))
-        seen_ports.add(BASE_PORT)
+    _base = registry_base_port()
+    if server_healthy(_base):
+        running.append(("shared", _base))
+        seen_ports.add(_base)
     for o in load_registry()["owners"]:
         if o["port"] in seen_ports:
             continue
@@ -433,10 +459,10 @@ def ensure_provider():
             running.append((o["id"], o["port"]))
             seen_ports.add(o["port"])
     if not running:
-        r = start_server(BASE_PORT, f"/tmp/cov-serve-{BASE_PORT}.log",
+        r = start_server(_base, f"/tmp/cov-serve-{_base}.log",
                          api_key=sel.get("api_key"))
         st = load_state()
-        st.setdefault("servers", {})["shared"] = BASE_PORT
+        st.setdefault("servers", {})["shared"] = _base
         save_state(st)
         if not r:
             fail("ensure_provider: shared server failed to start", 8)
@@ -1375,11 +1401,12 @@ def restart_running_servers():
     registry = load_registry()
     running = []
     seen_ports = set()
-    if server_healthy(BASE_PORT):
-        running.append(("shared", BASE_PORT))   # shared mode serves ALL owners
-        seen_ports.add(BASE_PORT)
+    _base = registry_base_port(registry)
+    if server_healthy(_base):
+        running.append(("shared", _base))   # shared mode serves ALL owners
+        seen_ports.add(_base)
     for o in registry["owners"]:
-        # dedupe: root's port IS BASE_PORT — already covered as 'shared' above
+        # dedupe: root's port IS the base — already covered as 'shared' above
         if o["port"] in seen_ports:
             continue
         if server_healthy(o["port"]):
@@ -1432,7 +1459,7 @@ def cmd_serve(args):
         if args.per_owner_ports:
             targets = [(o["id"], o["port"]) for o in registry["owners"]]
         else:
-            targets = [("shared", BASE_PORT)]
+            targets = [("shared", registry_base_port(registry))]
         if args.owner:
             o = owner_by_id(registry, args.owner)
             if not o:
@@ -1474,18 +1501,20 @@ def cmd_serve(args):
             healthy = server_healthy(o["port"])
             servers.append({"owner": o["id"], "port": o["port"], "healthy": healthy,
                             "pid": read_pid(o["port"])})
+        _base = registry_base_port(registry)
         out_json({"ok": True, "servers": servers,
-                  "shared_port": BASE_PORT,
-                  "shared_healthy": server_healthy(BASE_PORT),
+                  "base_port": _base,
+                  "shared_port": _base,
+                  "shared_healthy": server_healthy(_base),
                   "provider": load_state().get("provider"),
                   "zai_proxy_healthy": zai_proxy_healthy()})
     elif action == "stop":
         # R6b: --owner scopes the stop to ONE server (this flag used to parse
         # then stop EVERYTHING — killed a live eval mid-run; eval v3's 0/12).
-        targets = registry["owners"] + [{"id": "shared", "port": BASE_PORT}]
+        targets = registry["owners"] + [{"id": "shared", "port": registry_base_port(registry)}]
         if args.owner:
             if args.owner == "shared":
-                targets = [{"id": "shared", "port": BASE_PORT}]
+                targets = [{"id": "shared", "port": registry_base_port(registry)}]
             else:
                 o = owner_by_id(registry, args.owner)
                 if not o:
@@ -1527,8 +1556,9 @@ def owner_port(registry, oid):
     # prefer the owner's own port if healthy, else the shared server
     if server_healthy(o["port"]):
         return o["port"]
-    if server_healthy(BASE_PORT):
-        return BASE_PORT
+    _base = registry_base_port(registry)
+    if server_healthy(_base):
+        return _base
     fail("no serve server running — start with: cov.py serve start", 7)
 
 

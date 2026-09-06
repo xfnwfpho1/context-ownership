@@ -32,11 +32,11 @@ git add -A && git commit -m "demo corpus v1"
 # 2. Compile the fleet (probe-driven serving; free/keyless = $0).
 #    Durable state is git-versioned by design: commit after init and
 #    after build (the registry and bundles ARE the fleet).
-#    Pick a FREE port range first (see the skill doc's "Ports" note):
+#    Pick a FREE port range — the export matters ONLY for `init`, which
+#    records the range in the registry; later commands read it back:
 ss -ltn | awk '{print $4}' | grep -oE '[0-9]+$' | sort -n | uniq
-export COV_BASE_PORT=4400               # e.g. — disjoint from what's listed;
-                                        # use the SAME value for every command
-python3 $CTXOWN --project . init       # 7 owners from the tree
+export COV_BASE_PORT=4400               # e.g. — disjoint from what's listed
+python3 $CTXOWN --project . init       # 7 owners; range recorded here
 git add -A && git commit -q -m "registry"   # registry.json must be tracked
 python3 $CTXOWN --project . check      # fit + drift + sizes
 python3 $CTXOWN --project . build      # 7 LLM calls; minutes on free-tier

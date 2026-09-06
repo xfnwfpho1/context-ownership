@@ -701,6 +701,23 @@ try:
         import shutil as _sh
         _sh.rmtree(_t28, ignore_errors=True)
 
+    # T29 (regression, found live by usability round 4): ports are a
+    # RECORDED project property — serve/status/stop/ask must resolve the
+    # shared server from the registry, never from the current shell's
+    # COV_BASE_PORT (a project deployed on 4600 restarted onto 4200 from
+    # a bare shell and status misreported the shared summary).
+    print("\n== T29: registry base port wins over the shell environment ==")
+    check("registry['base_port'] wins over the env default",
+          cov.registry_base_port({"base_port": 4600}) == 4600)
+    check("legacy registry: root owner's port is the base",
+          cov.registry_base_port({"owners": [{"id": "root", "port": 4500}]}) == 4500)
+    check("empty registry falls back to the env default",
+          cov.registry_base_port({}) == cov.BASE_PORT)
+    src29 = Path(CTXOWN).read_text()
+    check("serve start/status/stop use registry_base_port (source guard)",
+          src29.count("registry_base_port(registry)") >= 3
+          and '"shared", BASE_PORT' not in src29)
+
 finally:
     print("\n== restoring state ==")
     try:
