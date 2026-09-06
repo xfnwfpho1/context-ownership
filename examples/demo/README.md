@@ -31,7 +31,10 @@ git add -A && git commit -m "demo corpus v1"
 # 2. Compile the fleet (probe-driven serving; free/keyless = $0).
 #    Durable state is git-versioned by design: commit after init and
 #    after build (the registry and bundles ARE the fleet).
-export COV_BASE_PORT=4300              # stay off the 4200.. flagship range
+#    Pick a FREE port range first (see the skill doc's "Ports" note):
+ss -ltn | awk '{print $4}' | grep -oE '[0-9]+$' | sort -n | uniq
+export COV_BASE_PORT=4400               # e.g. — disjoint from what's listed;
+                                        # use the SAME value for every command
 python3 $CTXOWN --project . init       # 7 owners from the tree
 git add -A && git commit -q -m "registry"   # registry.json must be tracked
 python3 $CTXOWN --project . check      # fit + drift + sizes
@@ -50,7 +53,7 @@ python3 $CTXOWN --project . ask --owner COMMS \
 #    process trees at ~590 s). detach.py is the layer's generic runner:
 python3 /home/z/my-project/context-ownership/scripts/detach.py \
   --log eval.log --cwd . -- \
-  env COV_BASE_PORT=4300 python3 $CTXOWN --project . eval --arms all
+  python3 $CTXOWN --project . eval --arms all
 tail eval.log                          # poll: eval.log.rc appears when done
 ls eval/plants/                         # per-plant evidence survives the
                                         # restore by design (R15f+)

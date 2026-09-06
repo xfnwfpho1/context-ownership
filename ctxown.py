@@ -1037,6 +1037,23 @@ def cmd_build(args):
                 "bundle_bytes": m["bundle_bytes"],
                 "periphery_refs": len(m["periphery_inputs"])}
 
+    # Progress goes to STDERR (stdout stays the single-JSON contract;
+    # detach.py merges both into the log). A 9-minute silent build log is
+    # indistinguishable from a hang — usability finding UT-1.
+    _total = len(targets)
+
+    def _progress(idx, o):
+        print(f"[build {idx + 1}/{_total}] {o['id']} ...", file=sys.stderr, flush=True)
+
+    def build_one_wrapped(i_o):
+        i, o = i_o
+        _progress(i, o)
+        r = build_one(o)
+        print(f"[build {i + 1}/{_total}] {o['id']} ok "
+              f"(bundle {r['bundle_bytes']}B, {r['periphery_refs']} periphery refs)",
+              file=sys.stderr, flush=True)
+        return r
+
     # R15b: optional build parallelism (--workers). The build holds the
     # single-writer lock for the WHOLE command; per-owner mutation surfaces
     # (bundles/<id>/, agents/cov-<id>.md, corpus.sha) are disjoint per owner,
@@ -1049,9 +1066,9 @@ def cmd_build(args):
     if workers > 1 and len(targets) > 1 and not args.no_llm:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            built = list(pool.map(build_one, targets))
+            built = list(pool.map(build_one_wrapped, enumerate(targets)))
     else:
-        built = [build_one(o) for o in targets]
+        built = [build_one_wrapped((i, o)) for i, o in enumerate(targets)]
     # R6b: changed agent files under a live server = hot-reload poison; restart
     restarted = restart_running_servers() if agents_changed else []
     out_json({"ok": True, "built": built, "corpus_sha": corpus_sha(),
@@ -2682,6 +2699,8 @@ def cmd_eval(args):
     restored_ok = False
     try:
         for p in ground_truth:
+            print(f"[eval] plant {p['id']} — planting into {p['file']}",
+                  file=sys.stderr, flush=True)
             f = CORPUS_DIR / p["file"]
             if not f.exists():
                 details.append({"id": p["id"], "error": "file missing"})
@@ -2700,6 +2719,8 @@ def cmd_eval(args):
             # R8: an unverified restart means serving agents may be poisoned
             # (empty-text mode) — abort the eval instead of recording garbage.
             rb = rebuild_now()
+            print(f"[eval] plant {p['id']} — rebuild done (rc={rb.returncode})",
+                  file=sys.stderr, flush=True)
             try:
                 rbd = json.loads(rb.stdout.strip().splitlines()[-1]) if rb.stdout.strip() else {}
             except Exception:
@@ -2729,6 +2750,9 @@ def cmd_eval(args):
                      f"re-run (transport owners: {terr[:6]})", 5)
             hit = review_detects(review, p)
             detections_sharded[p["id"]] = hit
+            print(f"[eval] plant {p['id']} — sharded arm: {'DETECTED' if hit else 'miss'} "
+                  f"({len(review.get('report', {}).get('findings', []) or [])} findings)",
+                  file=sys.stderr, flush=True)
 
             # cold-grep baseline — R14: pinned to the CURRENT selection (the
             # per-plant rebuild restart may have healed a dead key and moved
@@ -2744,6 +2768,9 @@ def cmd_eval(args):
             if "coldgrep" in arms:
                 detections_coldgrep[p["id"]] = cold
                 eval_models.add(sel_now.get("model"))
+                print(f"[eval] plant {p['id']} — coldgrep arm: "
+                      f"{'DETECTED' if (isinstance(cold, bool) and cold) else cold}",
+                      file=sys.stderr, flush=True)
 
             # §8.6 arm (b): chunk-retrieval baseline (BM25 chunks -> one
             # cold prompt, no tools, no bundle). Same honest-abort rule.
@@ -2753,6 +2780,9 @@ def cmd_eval(args):
                     fail(f"eval aborted: plant {p['id']} — rag arm transport "
                          f"failure: {(rag_res or {}).get('error')}", 5)
                 detections_rag[p["id"]] = rag_detects(rag_res, p)
+                print(f"[eval] plant {p['id']} — rag arm: "
+                      f"{'DETECTED' if rag_detects(rag_res, p) else 'miss'}",
+                      file=sys.stderr, flush=True)
 
             details.append({"id": p["id"], "file": p["file"], "category": p.get("category"),
                             "sharded": hit,
@@ -2814,6 +2844,7 @@ def cmd_eval(args):
             fp_findings = fp_review.get("report", {}).get("finding_count", 0)
             gl.write_text(gl_text)  # reverted by the finally reset anyway
     finally:
+        print("[eval] restoring corpus to the snapshot ...", file=sys.stderr, flush=True)
         # F1: guaranteed restore — reset files, rewind to clean_sha, rebuild.
         # The writer lock is released around the rebuild subprocess (it takes
         # its own lock); if re-acquisition fails the eval is already exiting.
