@@ -85,7 +85,9 @@ Updated 2026-09-01 (real-scale round): items 1 and 4 are now DONE — the
 3-arm eval ran on the REAL hermes corpus (10 plants, 64 owners, 339K
 tokens — 6x the pilot, nobody hand-designed the corpus for the model), and
 the second real deployment (cc-gha-exploration, 45 owners / 228K tokens)
-is staged with glossary + registry + no-llm bundles. R15/R15b/R15c/R15d
+was staged — glossary + registry + no-llm bundles — but was lost to a
+container recycle before its LLM build and was not re-staged; only the
+research repo remains. R15/R15b/R15c/R15d
 were all defects only real scale could surface (build timeout calibration,
 doc truncation ceiling, review-board concurrency scaling, squad
 compression parallelism).
@@ -102,13 +104,14 @@ What we have NOT run yet, ranked by value:
 3. **Build-loss audit** — the only way to see the failure serving owners
    are blind to (§3.4). One evening of work.
 4. ~~A second real deployment~~ **DONE** — hermes (live, evaluated) +
-   cc-gha (staged: corpus + glossary + registry; LLM build pending).
+   cc-gha (staged fleet lost in a container recycle — not re-staged).
 5. **Registry churn under live edits** — add/retire docs mid-flight, watch
    `check` catch drift and `init`+`rebuild` heal it ([T24] covers the
    mechanics; a live churn drill has not run).
 6. **Co-change mining + tree diff** (§2.2) — the refactoring-backlog signal.
 7. **cc-gha full LLM build + eval** — the second real corpus through the
-   same ladder (glossary authored; build is one evening of provider budget).
+   same ladder. Declined by the principal for now (no second corpus); the
+   ladder itself is proven on hermes.
 
 ## Verdict
 

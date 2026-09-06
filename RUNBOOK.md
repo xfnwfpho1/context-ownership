@@ -50,8 +50,10 @@ Known cold-start traps: file-mode drift on kit scripts after restore
 
 ## 2. Server lifecycle
 
-- One OpenCode serve server per project: hermes on 4200, cc-gha on 4400+.
-  Project-scoped locks make parallel deployments on disjoint ports safe.
+- One OpenCode serve server per project: hermes on 4200, the pilot on 4300
+  (re-based off 4200 — its range used to overlap the flagship's, which the
+  R17 guard now refuses loudly). The staged cc-gha fleet (4400+) was lost in
+  a container recycle and never re-staged; only its research repo remains.
 - Start/verify: `serve start` probes the provider chain (OpenRouter paid
   first, keyless zai last) and brings up the server; treat an unverified
   start as a failure.

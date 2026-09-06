@@ -96,6 +96,13 @@ def _resolve_project_dir():
     env = (os.environ.get("CTXOWN_PROJECT") or os.environ.get("COV_PROJECT"))
     if env and (Path(env) / "corpus").is_dir():
         return Path(env)
+    if env:
+        # R17 (P2): a stale/invalid $CTXOWN_PROJECT used to be silently
+        # ignored — commands then ran against the cwd/script-dir project
+        # with no hint at all (found live by the audit). Say so loudly.
+        print(f"ctxown: WARNING: $CTXOWN_PROJECT={env!r} has no corpus/ — "
+              f"ignoring it and falling back to cwd/script dir",
+              file=sys.stderr, flush=True)
     # cwd probe: `python3 ctxown.py <cmd>` run FROM a project dir must work
     # without --project (found live: the eval's per-plant rebuild subprocess
     # omitted --project, silently resolved to the LAYER repo — whose own
@@ -139,8 +146,16 @@ EVAL_DIR = PROJECT_DIR / "eval"
 SHARED_DIR = BUNDLES_DIR / "_shared"
 
 # --- Config ---
+def _int_env(name, default):
+    """Env-var int with a safe fallback (a malformed COV_*/OC_* value used
+    to crash at import time with a raw traceback; found by the R17 audit)."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
 DEFAULT_MODEL = os.environ.get("COV_MODEL", "openrouter/z-ai/glm-5.3-flash")
-BASE_PORT = int(os.environ.get("COV_BASE_PORT", "4200"))
+BASE_PORT = _int_env("COV_BASE_PORT", 4200)
 
 
 def registry_base_port(registry=None):
@@ -185,8 +200,8 @@ LOCK_FILE = PROJECT_DIR / ".ctxown.lock"
 #   2. OpenRouter fallback key × same model list
 #   3. zai-local proxy (kit scripts/zai_proxy.mjs — the sandbox's keyless
 #      GLM access exposed as an OpenAI-compatible endpoint; needs the proxy)
-PROBE_MAX_TOKENS = int(os.environ.get("COV_PROBE_MAX_TOKENS", "32000"))
-ZAI_PROXY_PORT = int(os.environ.get("COV_ZAI_PROXY_PORT", "4570"))
+PROBE_MAX_TOKENS = _int_env("COV_PROBE_MAX_TOKENS", 32000)
+ZAI_PROXY_PORT = _int_env("COV_ZAI_PROXY_PORT", 4570)
 ZAI_PROXY_URL = os.environ.get("COV_ZAI_PROXY_URL",
                                f"http://127.0.0.1:{ZAI_PROXY_PORT}")
 ZAI_MODEL = os.environ.get("COV_ZAI_MODEL", "zai/glm-4-plus")
@@ -450,12 +465,19 @@ def ensure_provider():
     seen_ports = set()
     _base = registry_base_port()
     if server_healthy(_base):
+        # R17 (P1): never ADOPT a healthy foreign listener as this project's
+        # shared server (two projects on overlapping ranges did exactly that
+        # — found live: pilot + flagship both on 4200).
+        if not listener_is_ours(_base):
+            fail(f"ensure_provider: port {_base} is held by a HEALTHY server that is "
+                 f"not this project's oc serve (foreign project or service) — stop it "
+                 f"or re-init this project on a free COV_BASE_PORT range", 8)
         running.append(("shared", _base))
         seen_ports.add(_base)
     for o in load_registry()["owners"]:
         if o["port"] in seen_ports:
             continue
-        if server_healthy(o["port"]):
+        if server_healthy(o["port"]) and listener_is_ours(o["port"]):
             running.append((o["id"], o["port"]))
             seen_ports.add(o["port"])
     if not running:
@@ -477,6 +499,12 @@ def ensure_provider():
         # unknown or stale key on a live server — verified restart with the
         # selected key (zai selections need no env key; no restart required)
         for name, port in running:
+            # R17 (P1): only OUR OWN servers are ever killed for a key
+            # restart — a foreign listener is a hard refusal, not a target.
+            if not listener_is_ours(port):
+                fail(f"ensure_provider: refusing to restart {name} on :{port} — "
+                     f"the listener is not this project's oc serve (foreign "
+                     f"project or service)", 8)
             old_pid = listener_pid(port)
             killed, detail = kill_listener(port)
             if not killed:
@@ -570,7 +598,7 @@ def bundle_core_matches(owner, registry=None, docs=None):
     bfile = BUNDLES_DIR / owner["id"] / "BUNDLE.md"
     if not bfile.exists():
         return None
-    text = bfile.read_text()
+    text = bfile.read_text(errors="replace")
     marker = f"<!-- core: {owner['path']} -->"
     i = text.find(marker)
     j = text.find("\n## PERIPHERY RING", i)
@@ -584,7 +612,7 @@ def bundle_core_matches(owner, registry=None, docs=None):
         p = CORPUS_DIR / owner["path"]
         if not p.exists():
             return None
-        current = p.read_text()
+        current = p.read_text(errors="replace")
     return [] if embedded == current.strip() else [owner["path"]]
 
 
@@ -633,6 +661,11 @@ def cmd_init(args):
     docs_root = CORPUS_DIR / "docs"
     if not docs_root.is_dir():
         fail(f"docs/ dir not found under corpus: {docs_root_dir_hint()}")
+
+    # R17 (P1-3): init writes the registry — a concurrent eval/build/write
+    # must not interleave with it (the lock used to be held only by
+    # build/rebuild/eval, so init could rewrite owners mid-run).
+    _init_lock = single_writer_lock()
 
     # Real-tree hygiene (found via the hermes-agent-spine-research dry run):
     # 1. dot-directories (.agents/, .github/, .opencode/...) are agent/harness
@@ -695,6 +728,16 @@ def cmd_init(args):
         "created_at": time.time(),
     }
     REGISTRY_PATH.write_text(json.dumps(registry, indent=2, ensure_ascii=False))
+    # R17 (P1): warn when the recorded range is already occupied on this box
+    # — two projects on overlapping ranges adopt/kill each other's servers
+    # (found live: the pilot and the flagship both recorded 4200).
+    occupied = [p for p in range(BASE_PORT, BASE_PORT + len(owners))
+                if listener_pid(p) is not None]
+    if occupied:
+        print(f"ctxown: WARNING: ports {occupied} of the recorded range "
+              f"{BASE_PORT}..{BASE_PORT + len(owners) - 1} are already in use — "
+              f"pick a free range (export COV_BASE_PORT=<free base> before init) "
+              f"or serve will refuse to adopt/stop them", file=sys.stderr, flush=True)
     out_json({"ok": True, "registry": str(REGISTRY_PATH),
               "owners": len(owners), "ids": [o["id"] for o in owners]})
 
@@ -715,12 +758,12 @@ def first_heading(md_path):
 
 def load_registry():
     if not REGISTRY_PATH.exists():
-        fail("registry.json not found — run: cov.py init", 2)
+        fail("registry.json not found — run: ctxown.py init", 2)
     # R8/F22: malformed registry is a structured error, never a traceback
     try:
         return json.loads(REGISTRY_PATH.read_text())
     except json.JSONDecodeError as e:
-        fail(f"registry corrupted ({e}) — re-run `cov.py init` or repair it", 2)
+        fail(f"registry corrupted ({e}) — re-run `ctxown.py init` or repair it", 2)
 
 
 def owner_by_id(registry, oid):
@@ -754,7 +797,7 @@ OPERATING PROTOCOL (all owners share this):
 5. If the wake-time diff (appended at the tail of the question) shows YOUR OWN
    document changed since your bundle was built, REFUSE to answer: reply
    exactly STALE_REFUSED and instruct the caller to rebuild your bundle
-   (cov.py rebuild). Answering from a stale bundle is the worst failure mode.
+   (ctxown.py rebuild). Answering from a stale bundle is the worst failure mode.
 6. If you find LIVE corpus content that contradicts your bundle, do NOT
    silently reconcile — report it as BUNDLE_CONTRADICTION (highest-signal
    error the system can emit).
@@ -851,7 +894,7 @@ def build_owner_bundle(owner, registry, docs, use_llm=True):
         # R8/F22: registry-listed doc deleted — structured error, not a traceback
         if not core_path.exists():
             fail(f"corpus file missing for owner {owner['id']}: {owner['path']} "
-                 f"— restore it or re-run `cov.py init`", 3)
+                 f"— restore it or re-run `ctxown.py init`", 3)
         core_text = core_path.read_text()
 
     refs, glossary_rows = periphery_for(owner, registry, docs)
@@ -880,7 +923,7 @@ def build_owner_bundle(owner, registry, docs, use_llm=True):
         if prior:
             derived = prior
         else:
-            derived = "(derived layer not yet compiled — run a full `cov.py build` to generate it; the CORE ring above is verbatim and authoritative)"
+            derived = "(derived layer not yet compiled — run a full `ctxown.py build` to generate it; the CORE ring above is verbatim and authoritative)"
             derived_ok = False
 
     parts = [f"# BUNDLE — owner `{owner['id']}` ({owner['title']})",
@@ -1036,7 +1079,7 @@ def cmd_build(args):
         untracked_hint = ""
         rcu, outu, _ = git(["ls-files", "--others", "--exclude-standard"])
         if rcu == 0 and outu.strip():
-            untracked_hint = ("\n(untracked files present — a NEW doc needs `cov.py init` "
+            untracked_hint = ("\n(untracked files present — a NEW doc needs `ctxown.py init` "
                               "to become an owner; untracked scratch files should be "
                               "ignored or removed)")
         fail("corpus working tree is dirty — a build would pin HEAD's sha over "
@@ -1049,7 +1092,7 @@ def cmd_build(args):
     write_shared()
     targets = [owner_by_id(registry, args.owner)] if args.owner else registry["owners"]
     if args.owner and not targets[0]:
-        fail(f"unknown owner: {args.owner} (see cov.py owners)", 3)
+        fail(f"unknown owner: {args.owner} (see ctxown.py owners)", 3)
     built = []
     agents_changed = []
 
@@ -1281,7 +1324,8 @@ def start_server(port, log_path, api_key=None):
         # live: eval v8's whole sharded arm was empty-200s on a dead key).
         if api_key:
             os.environ["OPENROUTER_API_KEY"] = api_key
-        Path(f"/tmp/cov-serve-{port}.pid").write_text(str(os.getpid()))
+        Path(f"/tmp/cov-serve-{port}.pid").write_text(json.dumps(
+            {"pid": os.getpid(), "project": str(PROJECT_DIR)}))
         os.execvp("opencode", ["opencode", "serve", "--port", str(port), "--hostname", "127.0.0.1"])
     except Exception:
         Path(f"/tmp/cov-serve-{port}.pid").unlink(missing_ok=True)
@@ -1292,10 +1336,51 @@ def read_pid(port):
     pf = Path(f"/tmp/cov-serve-{port}.pid")
     if pf.exists():
         try:
-            return int(pf.read_text().strip())
+            raw = pf.read_text().strip()
+            try:
+                j = json.loads(raw)
+                if isinstance(j, dict) and j.get("pid") is not None:
+                    return int(j["pid"])
+                if isinstance(j, int):
+                    return j
+            except Exception:
+                pass
+            return int(raw)   # legacy plain-int pidfile (pre-R17)
         except Exception:
             return None
     return None
+
+
+def _pid_cmdline(pid):
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
+    except Exception:
+        return ""
+
+
+def listener_is_ours(port):
+    """R17 (P1): True if the listener on <port> is an opencode serve process
+    started by ctxown FOR THIS PROJECT. A healthy port used to be adopted
+    blindly — two projects sharing a range (found live: the pilot and the
+    flagship both recorded base 4200) would adopt each other's servers, and
+    ensure_provider's stale-key restart path could KILL a foreign project's
+    live server. Attribution: the pidfile (now JSON {pid, project}; legacy
+    plain-int pidfiles fall back to pid-alive + opencode-cmdline, the best
+    evidence available from before the tagging existed)."""
+    lp = listener_pid(port) or read_pid(port)
+    if not lp or not pid_alive(lp):
+        return False
+    if "opencode" not in _pid_cmdline(lp):
+        return False
+    pf = Path(f"/tmp/cov-serve-{port}.pid")
+    if pf.exists():
+        try:
+            j = json.loads(pf.read_text().strip())
+            if isinstance(j, dict) and j.get("project"):
+                return Path(j["project"]).resolve() == PROJECT_DIR.resolve()
+        except Exception:
+            pass
+    return True   # legacy/plain pidfile: opencode process, untagged — accept
 
 
 def pid_alive(pid):
@@ -1346,15 +1431,24 @@ def wait_port_free(port, timeout_s=20):
 def kill_listener(port, timeout_s=15):
     """Kill whatever REALLY holds <port> (pid file first, then ss resolution),
     SIGTERM -> SIGKILL, then wait for the port to be free. Returns
-    (killed: bool, detail: str)."""
+    (killed: bool, detail: str).
+    R17 (P2-10): a pid whose /proc cmdline does NOT contain 'opencode' is
+    NEVER signalled — a stale pidfile whose pid was recycled by an innocent
+    process used to get SIGTERM/SIGKILLed blindly."""
     pids = []
+    skipped = []
     fp = read_pid(port)
     lp = listener_pid(port)
-    if fp and pid_alive(fp):
-        pids.append(fp)
-    if lp and lp not in pids and pid_alive(lp):
-        pids.append(lp)
+    for pid in ([fp] if (fp and pid_alive(fp)) else []) + \
+               ([lp] if (lp and lp != fp and pid_alive(lp)) else []):
+        if "opencode" in _pid_cmdline(pid):
+            pids.append(pid)
+        else:
+            skipped.append(pid)
     if not pids:
+        if skipped:
+            return False, (f"port {port} pids {skipped} are not opencode serves "
+                           f"(recycled/stale pidfile?) — refusing to kill")
         # nothing to kill by pid — port may still be held by an unresolvable
         # process; report honestly instead of pretending
         if listener_pid(port) is None:
@@ -1402,17 +1496,32 @@ def restart_running_servers():
     running = []
     seen_ports = set()
     _base = registry_base_port(registry)
+    foreign = []
     if server_healthy(_base):
-        running.append(("shared", _base))   # shared mode serves ALL owners
-        seen_ports.add(_base)
+        # R17 (P1): a foreign healthy listener is REPORTED, never killed
+        # (the old code treated any healthy port as ours to restart).
+        if listener_is_ours(_base):
+            running.append(("shared", _base))   # shared mode serves ALL owners
+            seen_ports.add(_base)
+        else:
+            foreign.append(("shared", _base))
+            seen_ports.add(_base)
     for o in registry["owners"]:
         # dedupe: root's port IS the base — already covered as 'shared' above
         if o["port"] in seen_ports:
             continue
         if server_healthy(o["port"]):
-            running.append((o["id"], o["port"]))
-            seen_ports.add(o["port"])
+            if listener_is_ours(o["port"]):
+                running.append((o["id"], o["port"]))
+                seen_ports.add(o["port"])
+            else:
+                foreign.append((o["id"], o["port"]))
+                seen_ports.add(o["port"])
     out = []
+    for name, port in foreign:
+        out.append({"server": name, "port": port, "restarted": False,
+                    "error": "healthy listener is not this project's oc serve "
+                             "(foreign) — left untouched"})
     for name, port in running:
         old_pid = listener_pid(port)
         killed, detail = kill_listener(port)
@@ -1472,7 +1581,19 @@ def cmd_serve(args):
         started = []
         for name, port in targets:
             if server_healthy(port):
-                started.append({"server": name, "port": port, "already_running": True})
+                # R17 (P1): only adopt a listener we can attribute to THIS
+                # project; a healthy FOREIGN listener is a refusal, not an
+                # "already_running" (found live: pilot + flagship both
+                # recorded base 4200 — each would silently serve the other's
+                # owners).
+                if listener_is_ours(port):
+                    started.append({"server": name, "port": port, "already_running": True})
+                else:
+                    started.append({"server": name, "port": port, "error":
+                                    "healthy listener on this port is NOT this project's "
+                                    "oc serve (foreign project or service) — not adopted; "
+                                    "stop it manually or re-init the project on a free "
+                                    "COV_BASE_PORT range"})
                 continue
             need_mb = 500
             if mem_available_mb() < need_mb:
@@ -1559,7 +1680,7 @@ def owner_port(registry, oid):
     _base = registry_base_port(registry)
     if server_healthy(_base):
         return _base
-    fail("no serve server running — start with: cov.py serve start", 7)
+    fail("no serve server running — start with: ctxown.py serve start", 7)
 
 
 def stale_guard(owner):
@@ -1615,10 +1736,10 @@ def cov_ask_owner(oid, question, session=None, timeout=120, registry=None,
         if state == "stale-dirty":
             return {"ok": False, "refused": True, "state": state,
                     "error": (f"owner {oid} is STALE-DIRTY (core changed: {changed}) — "
-                              "answering is forbidden; run: cov.py rebuild")}
+                              "answering is forbidden; run: ctxown.py rebuild")}
         if state == "unbuilt":
             return {"ok": False, "refused": True, "state": state,
-                    "error": f"owner {oid} has no bundle built yet — run: cov.py build"}
+                    "error": f"owner {oid} has no bundle built yet — run: ctxown.py build"}
         return {"ok": False, "refused": True, "state": state,
                 "error": (f"owner {oid} coherence is UNVERIFIED (git could not diff "
                           "against its pinned sha) — repair corpus history or rebuild")}
@@ -1675,7 +1796,7 @@ def cov_ask_owner(oid, question, session=None, timeout=120, registry=None,
             "model_chain": chain,
             "error": (f"owner ask failed on every model in the chain "
                       f"({', '.join(chain)}): {last_err}"),
-            "hint": "provider layer down? run: cov.py serve probe"}
+            "hint": "provider layer down? run: ctxown.py serve probe"}
 
 
 def cmd_ask(args):
@@ -1860,7 +1981,7 @@ def cmd_review(args):
         fail(f"--file must be a corpus-relative path (got: {changed_file})", 3)
     # R6/F8: --owner must exist
     if args.owner and not owner_by_id(registry, args.owner):
-        fail(f"unknown owner: {args.owner} (see cov.py owners)", 3)
+        fail(f"unknown owner: {args.owner} (see ctxown.py owners)", 3)
     base = args.base or last_commit_sha_for(changed_file)
     # R6/F4: include UNCOMMITTED worktree edits — reviewing only the last
     # commit's diff while the working tree carries newer edits silently
@@ -2133,6 +2254,12 @@ def git_mut(*args, _where="ctxown"):
 
 
 def cmd_write(args):
+    # R17 (P1-3): the write path mutates the corpus, commits, and spawns a
+    # rebuild — it used to bypass the single-writer lock entirely, so a
+    # concurrent eval/build could interleave with the write's enforce check
+    # (git_changed_tracked seeing the OTHER command's diffs as a false
+    # confinement violation) and shift each other's commit bases.
+    _wlock = single_writer_lock()
     registry = load_registry()
     owner = owner_by_id(registry, args.owner)
     if not owner:
@@ -2243,10 +2370,16 @@ def cmd_write(args):
         git_mut("commit", "-m",
                 f"write: {args.owner} — {args.instruction[:60]}", "--allow-empty",
                 _where="write path")
-        subprocess.run([sys.executable, __file__, "--project", str(PROJECT_DIR),
-                        "rebuild", "--no-llm"],
-                       capture_output=True, text=True, cwd=str(PROJECT_DIR),
-                       stdin=subprocess.DEVNULL, timeout=1800)
+        # R17 (P1-3): release the writer lock around the rebuild subprocess
+        # (it takes its own lock — same pattern as the eval's rebuild_now).
+        os.close(_wlock)
+        try:
+            subprocess.run([sys.executable, __file__, "--project", str(PROJECT_DIR),
+                            "rebuild", "--no-llm"],
+                           capture_output=True, text=True, cwd=str(PROJECT_DIR),
+                           stdin=subprocess.DEVNULL, timeout=1800)
+        finally:
+            _wlock = single_writer_lock()
         state2, _ = stale_guard(owner)
         verify = cov_ask_owner(args.owner,
                                f"Quote the exact passage in your owned document "
@@ -2667,10 +2800,12 @@ def cmd_eval(args):
         if missing:
             fail(f"--plants referenced unknown IDs: {sorted(missing)} "
                  f"(check eval/planted.json)", 3)
-        print(f"--plants: selected {len(ground_truth)} of {before} plants")
+        print(f"--plants: selected {len(ground_truth)} of {before} plants",
+              file=sys.stderr, flush=True)   # R17 (P2-1): stdout is the single-JSON contract
     registry = load_registry()
 
     _lock = single_writer_lock()
+    run_stamp = time.strftime("%Y%m%d-%H%M%S")   # R17 (P1-1): evidence run dir
 
     def git_mut(*args):
         """R8/#8: a mutating git call whose failure must abort the eval — an
@@ -2716,6 +2851,18 @@ def cmd_eval(args):
     clean_sha = corpus_sha()
     originals = {}
 
+    # R17 (P2-9): git ops run from corpus/ but act on the REPO containing it.
+    # The intended layout is project-root-as-repo. When the toplevel is NOT
+    # the project root (a project nested inside another repo — the hermes
+    # deployment anchors to the workspace repo; the demo template sits
+    # inside the layer repo), eval commits/reset/clean land on the PARENT
+    # repo — say so loudly instead of discovering it from stray commits.
+    rc_top, top, _ = git(["rev-parse", "--show-toplevel"])
+    if rc_top == 0 and top and Path(top).resolve() != PROJECT_DIR.resolve():
+        print(f"ctxown: WARNING: corpus repo toplevel is {top}, not the project "
+              f"root {PROJECT_DIR} — eval git operations (commit/reset/clean) act "
+              f"on that PARENT repo", file=sys.stderr, flush=True)
+
     # R14: probe + reconcile the provider AFTER the deterministic refusals
     # (dirty-corpus etc. must fire first — a dead provider must never mask
     # them; found via T6) but BEFORE planting anything — the eval must start
@@ -2724,7 +2871,7 @@ def cmd_eval(args):
     # coldgrep on whatever oc-tool's chain landed on). Mid-eval key death is
     # healed by the per-plant rebuild restarts (they re-probe).
     provider_sel = ensure_provider()
-    eval_models = set()
+    eval_models = {provider_sel.get("model")}   # R17 (P2-8): track EVERY arm's model (was coldgrep-only)
     arms_raw = (getattr(args, "arms", None) or "sharded,coldgrep").strip()
     arms = ["sharded", "coldgrep", "rag"] if arms_raw == "all" else \
            [a.strip() for a in arms_raw.split(",") if a.strip()]
@@ -2746,7 +2893,7 @@ def cmd_eval(args):
             if not f.exists():
                 details.append({"id": p["id"], "error": "file missing"})
                 continue
-            original = f.read_text()
+            original = f.read_text(errors="replace")
             if p["find"] not in original:
                 details.append({"id": p["id"], "error": "find-text not present (ground truth drift)"})
                 continue
@@ -2800,6 +2947,7 @@ def cmd_eval(args):
             # the selection; both arms re-read the same state, so they stay
             # pinned together per plant)
             sel_now = current_selection()
+            eval_models.add((sel_now or {}).get("model"))   # R17 (P2-8): the sharded board rides this selection too
             cold = (run_coldgrep_baseline(p, model=sel_now.get("model"))
                     if "coldgrep" in arms else None)
             if isinstance(cold, dict):
@@ -2839,19 +2987,21 @@ def cmd_eval(args):
             # 0) impossible to diagnose post-hoc. Raw evidence is what the
             # scorer-failure analysis needs; it is tiny (KBs per plant).
             try:
-                pdir = EVAL_DIR / "plants"
-                pdir.mkdir(parents=True, exist_ok=True)
-                # R15f+ (defect found live on the demo deployment 2026-09-06):
-                # evidence used to be wiped by the finally-restore
-                # (`git clean -fd`) unless a wrapper committed it — hermes
-                # only kept its evidence because a RELAUNCH happened to
-                # sweep it into the eval-snapshot commit. The dir now
-                # self-ignores: `git add -A` sweeps during the run skip it,
-                # reset --hard never sees it, clean -fd (no -x) keeps it;
-                # the finally force-commits it on top of the restored
-                # snapshot so it is durable in git too.
-                (pdir / ".gitignore").write_text("*\n!.gitignore\n")
-                (pdir / f"{p['id']}.json").write_text(json.dumps({
+                # R17 (P1-1): evidence is RUN-STAMPED — eval/plants/run-<ts>/
+                # <id>.json. The old flat <id>.json path became TRACKED after
+                # the first run's force-commit, so a re-run's fresh evidence
+                # was staged by per-plant `add -A`, then REVERTED to the
+                # previous run's content by the finally's `reset --hard`
+                # (found live by the audit: scores described run N while the
+                # files held run N-1 — the R15f+ goal, trustworthy durable
+                # evidence, was broken on every re-run). A fresh run dir is
+                # untracked + self-ignored: add -A skips it, reset --hard
+                # keeps it, clean -fd (no -x) keeps it, the finally
+                # force-commits it on the restored snapshot.
+                run_dir = EVAL_DIR / "plants" / f"run-{run_stamp}"
+                run_dir.mkdir(parents=True, exist_ok=True)
+                (EVAL_DIR / "plants" / ".gitignore").write_text("*\n!.gitignore\n")
+                (run_dir / f"{p['id']}.json").write_text(json.dumps({
                     "plant": p, "review": review,
                     "review_detects": hit,
                     "coldgrep": cold,
@@ -2911,13 +3061,24 @@ def cmd_eval(args):
         # R15f+: evidence survives the restore BY DESIGN now (it self-ignored
         # during the run) — force-commit it on top of the restored snapshot
         # so it is durable in git and immune to the next eval's clean.
+        # R17 (P2-2): this used git_mut(), whose fail() raises SystemExit —
+        # SystemExit is NOT an Exception, so a failed evidence commit ABORTED
+        # INSIDE the finally and masked the eval's own result JSON. It is now
+        # plain git() with a stderr warning; evidence loss is never a
+        # run-killer and never pollutes the stdout JSON contract.
         try:
             pdir = EVAL_DIR / "plants"
             if pdir.is_dir() and any(pdir.iterdir()):
-                git_mut("add", "-f", str(pdir))
-                git_mut("commit", "-m", "eval evidence (R15f)", "--allow-empty")
-        except Exception:
-            pass
+                rc_ev, out_ev, err_ev = git(["add", "-f", str(pdir)])
+                if rc_ev == 0:
+                    rc_ev, out_ev, err_ev = git(
+                        ["commit", "-m", f"eval evidence (R15f, run {run_stamp})",
+                         "--allow-empty"])
+                if rc_ev != 0:
+                    print(f"ctxown: WARNING: evidence commit failed: "
+                          f"{((err_ev or out_ev) or '')[:200]}", file=sys.stderr)
+        except BaseException as e:
+            print(f"ctxown: WARNING: evidence commit failed: {e}", file=sys.stderr)
 
     n = len(detections_sharded)
     score = {"planted": n,
@@ -2933,11 +3094,18 @@ def cmd_eval(args):
              "per_plant": details}
     out_json({"ok": True, "eval": score, "restored_clean": restored_ok,
               "model_mixed": len([m for m in eval_models if m]) > 1,
-              "verdict": ("SHARDED_WINS" if score["sharded_detected"] > score["coldgrep_detected"]
-                          else "TIE" if score["sharded_detected"] == score["coldgrep_detected"]
-                          else "COLDGREP_WINS"),
+              "evidence_dir": str(EVAL_DIR / "plants" / f"run-{run_stamp}"),
+              "verdict": (
+                  # R17 (P2-8): a cross-arm verdict only makes sense for arms
+                  # that RAN — `--arms sharded` used to emit SHARDED_WINS
+                  # against a coldgrep count of 0 that never measured
+                  # anything.
+                  None if "coldgrep" not in arms else
+                  ("SHARDED_WINS" if score["sharded_detected"] > score["coldgrep_detected"]
+                   else "TIE" if score["sharded_detected"] == score["coldgrep_detected"]
+                   else "COLDGREP_WINS")),
               "verdict_3arm": (
-                  None if score["rag_detected"] is None else
+                  None if (score["rag_detected"] is None or "coldgrep" not in arms) else
                   ("SHARDED_WINS" if score["sharded_detected"] > max(score["coldgrep_detected"], score["rag_detected"])
                    else "TIE" if score["sharded_detected"] == max(score["coldgrep_detected"], score["rag_detected"])
                    else "BASELINES_WIN"))})

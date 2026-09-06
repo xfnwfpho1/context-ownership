@@ -83,19 +83,19 @@ Design rules that are load-bearing and enforced in code:
 ## Tests
 
 ```bash
-python3 tests/test_ctxown.py   # deterministic, no LLM calls (85 checks;
-                               # +2 live-server checks when a server is up)
+python3 tests/test_ctxown.py   # deterministic, no LLM calls (101 checks;
+                               # +1 live-server check when a server is up)
 ```
 
 ## Repository layout
 
 ```
 ctxown.py               the controller (single file, stdlib only)
-tests/test_ctxown.py    deterministic regression + capability suite (85 checks)
+tests/test_ctxown.py    deterministic regression + capability suite (101 checks)
 scripts/detach.py        double-fork runner — long steps (build/eval) MUST run detached
 skills/oc-agent-fleet/   the deployment SKILL: a fresh-context agent's single entry point
-examples/demo/           runnable toy deployment: 5-minute walkthrough, 2 plants
-examples/pilot/          pointer to the reference deployment
+examples/demo/          runnable toy deployment (Aurora Station: 7 owners,
+                        2 plants, walkthrough README)
 ARCHITECTURE.md         the E2E system as it actually runs (components, flows, eval mechanics)
 RUNBOOK.md              operating procedures: cold start, servers, build, eval, failure playbook
 SPEC-COMPLIANCE.md      every spec section -> status -> evidence

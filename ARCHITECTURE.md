@@ -19,7 +19,7 @@ GHA job executes any part of this system.
 fleet's owner count — 64 durable bundles on disk (63 leaf owners + the root
 manager). An owner is a registry row + a bundle + a policy, never a running
 process. At steady state the whole deployment is: 1 OpenCode serve server per
-project (port 4200 for hermes, 4400+ for cc-gha), 1 keyless zai proxy (port
+project (port 4200 for hermes, 4300 for the pilot), 1 keyless zai proxy (port
 4570), 2 MCP servers, and short-lived controller invocations. Concurrency is
 an execution knob (`review --concurrency`), not a fleet size: measured points
 are 12-way review (856 s for a full 63-owner board), a one-off 63-way blast
@@ -32,13 +32,14 @@ are 12-way review (856 s for a full 63-owner board), a one-off 63-way blast
 │ Sandbox container (2 vCPU / 4 GiB, no durable disk)                │
 │                                                                    │
 │  /home/z/my-project/                                               │
-│  ├── opencode-zai-agent-kit/   OC harness (oc-tool.py v0.5.7,      │
+│  ├── opencode-zai-agent-kit/   OC harness (oc-tool.py v0.6.0,      │
 │  │                             setup.sh, MCP servers, tests)       │
 │  ├── context-ownership/        THE LAYER (ctxown.py, stdlib only,  │
-│  │                             3.1K lines, 13 subcommands)         │
+│  │                             3.3K lines, 14 subcommands)         │
 │  ├── adopt-scan/hermes-proj/   Flagship fleet: corpus/ (own git),  │
 │  │                             bundles/, registry.json, eval/      │
-│  ├── adopt-scan/cc-gha-*/      Second fleet (staged)               │
+│  ├── adopt-scan/cc-gha-*/      Research repo (staged fleet lost in a │
+│  │                             container recycle, not re-staged)   │
 │  └── opencode-harness/         Spec + pilot deployment (cov/)      │
 │                                                                    │
 │  /home/sync/                   ossfs mount — survives recycles     │
@@ -120,9 +121,9 @@ architecture, not model tier, is the variable.
 
 | Fleet | Owners | Tokens | State |
 |---|---|---|---|
-| `hermes-agent-spine-research` (flagship) | 64 (63 leaves + root) | 339K | Live: glossary (70+ terms), 64/64 LLM bundles, evaluated twice, non-bridged eval in flight |
-| `cc-gha-exploration` | 45 | 228K | Staged: glossary (48 terms), deterministic build done, LLM build queued |
-| pilot (`opencode-harness/cov/`) | 35 | ~55K | Reference: 19 plants, eval v9 (TIE 6-6, P17 sharded-unique) |
+| `hermes-agent-spine-research` (flagship) | 64 (63 leaves + root) | 339K | Live: glossary (70+ terms), 64/64 LLM bundles, evaluated; decisive non-bridged round LANDED — SHARDED_WINS (§6c) |
+| `cc-gha-exploration` | 45 | 228K | Staged fleet LOST in a container recycle; only the research repo remains (not re-staged) |
+| pilot (`opencode-harness/cov/`) | 35 | ~55K | Reference: 19 plants, eval v9 (TIE 6-6, P17 sharded-unique); suite fixture |
 
 A *project* is any directory containing `corpus/docs/*.md` +
 `corpus/glossary.md` inside a git repo. The corpus is **assembled, not
@@ -225,14 +226,16 @@ run granularity.
   were lexically bridged — realistic drift carries tokens grep can follow.
   The RAG arm's 2 misses are the clean negative control: retrieval without
   ownership knowledge doesn't know where authority lives.
-- Non-bridged round (in flight, 6 plants: 2 semantic-conversion, 1 bridged
-  control, 3 compiled-memory): NP-1 (semantic conversion) was caught by all
-  three arms; the run then hit a transient provider 404, aborted honestly
-  (rc=5, corpus self-restored, measured cost $0.033) and was resumed with
-  `--plants` for the remaining five. The discriminating category is
-  compiled-memory: values that exist only in the owner's preserved derived
-  layer, where coldgrep is structurally blind.
+- Non-bridged round (LANDED — SHARDED_WINS): 6 plants (2 semantic-conversion,
+  1 bridged control, 3 compiled-memory) against the 64-owner flagship, all
+  arms model-pinned per plant. Sharded 6/6, coldgrep 3/6, chunk-RAG 3/6,
+  0 false positives; the compiled-memory plants were caught 3/3 by the fleet
+  alone and 0/3 by both same-model baselines — the discriminating category
+  was values that exist only in the owner's preserved derived layer, where
+  coldgrep is structurally blind (the pre-registered prediction). Full
+  story + per-arm evidence: ADOPTION-REPORT §6c.
 - The model's demonstrated value so far is **not** raw detection rate on
   bridged drift — it is authority locality (P17), the staleness guarantee,
   the write ladder, and bounded per-owner context economics. The §1.4
-  detection-rate question stays open until the non-bridged round lands.
+  detection-rate question is CLOSED: the non-bridged round landed
+  SHARDED_WINS (compiled-memory plants are sharded-only).

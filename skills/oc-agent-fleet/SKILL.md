@@ -45,14 +45,18 @@ that is the system working as designed: the route exists, the money
 doesn't.
 
 **Ports (a recorded project property):** `COV_BASE_PORT` assigns a
-project's port range at **init** time (default 4200; the range is
-base..base+owner_count, recorded in the registry — only the base
+project's port range at **init** time (default 4200; the root owner sits at
+base, leaves at base+1 … base+N-1, recorded in the registry — only the base
 listens in shared mode). Every LATER command (build/serve/ask/eval/
 status/stop) resolves the project's server from the RECORDED range —
 no env exports needed after init, and a project deployed on 4600
-comes back on 4600 from any shell. Pick a range disjoint from what's
-already used on the box (check listeners AND this doc's ranges — the
-flagship fleet RESERVES 4200–4263 even when not listening):
+comes back on 4600 from any shell. A healthy listener on a recorded
+port that cannot be attributed to THIS project (pidfile identity) is
+never adopted and never killed — ctxown refuses loudly; two projects
+must not share a range (init warns when the range is occupied). Pick a
+range disjoint from what's already used on the box (check listeners AND
+this doc's ranges — the flagship fleet RESERVES 4200–4263 even when not
+listening):
 
 ```bash
 ss -ltn | awk '{print $4}' | grep -oE '[0-9]+$' | sort -n | uniq   # ports in use
@@ -206,6 +210,9 @@ toolcall boundary.
   routes automatically when you don't know.
 - **Ask one owner**: `ask --owner <id> "<question>"` — per-inquiry
   session; each answer quotes document + passage (no quote, no finding).
+  A sync ask that hits a dead provider walks the same model fallback
+  chain as `run` (attempts[] recorded) — a dead model never reports
+  `ok:true` with empty text.
 - **Route a task**: `task "<description>"` — resolves target owners and
   the LCA manager, then executes.
 - **Review a change**: `review --file docs/X.md --base <sha>` — the
@@ -265,10 +272,15 @@ Diagnose the provider (usually churn), resume with
 `eval --plants <remaining,ids>`. Measured abort cost so far: $0.038
 across two aborts; the decisive finish on free-tier: $0.000.
 
-Per-plant evidence (`eval/plants/<id>.json` — the full per-owner review
-JSON plus baseline answers) survives the restore **by design** and is
-committed on top of the restored snapshot ("eval evidence (R15f)"
-commit). The result line is the last JSON object in the run log.
+Per-plant evidence (`eval/plants/run-<timestamp>/<id>.json` — the full
+per-owner review JSON plus baseline answers) survives the restore **by
+design** and is committed on top of the restored snapshot ("eval evidence
+(R15f)" commit). Evidence is RUN-STAMPED: every run writes its own
+`run-<ts>/` directory, so re-runs never overwrite or revert earlier
+evidence (a re-run used to silently revert fresh files to the previous
+run's content — found live by the R17 audit). The result JSON names the
+run's evidence dir; the result line is the last JSON object in the run
+log.
 
 ## Gotchas index (each one found live)
 
@@ -296,7 +308,7 @@ commit). The result line is the last JSON object in the run log.
 | Scale strategy (sleep/live, 1k docs, doc cutting) | `<layer>/OPERATIONS.md` |
 | Spec contract, every section's status + evidence | `<layer>/SPEC-COMPLIANCE.md` |
 | What the experiments proved, honestly | `<layer>/ADOPTION-REPORT.md` (§6c = the decisive result) |
-| Deterministic suite (78 checks) | `python3 <layer>/tests/test_ctxown.py` |
+| Deterministic suite (101 checks) | `python3 <layer>/tests/test_ctxown.py` |
 | Kit integration suite (35 asserts + stress) | `bash <kit>/tests/test_oc_tool.sh`, `bash <kit>/tests/test_stress.sh` |
 
 Reference deployments: the flagship fleet is a 64-owner / 339K-token

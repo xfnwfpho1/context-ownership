@@ -1,6 +1,6 @@
 # Aurora Station — demo corpus (a 5-minute walkthrough)
 
-A toy context-ownership deployment: 6 ownable docs (~2.5K tokens total)
+A toy context-ownership deployment: 6 ownable docs (~3K tokens total, measured 3024)
 + a shared glossary → 7 owners (6 leaves + the root manager). It exists
 so you can learn the whole ladder — init → build → serve → ask → eval —
 in minutes at $0 on the keyless/free provider route, before pointing

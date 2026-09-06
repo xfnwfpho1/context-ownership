@@ -718,6 +718,123 @@ try:
           src29.count("registry_base_port(registry)") >= 3
           and '"shared", BASE_PORT' not in src29)
 
+    # T30 (regression, found live by the R17 audit): the eval's per-plant
+    # evidence is RUN-STAMPED — a re-run used to silently revert fresh
+    # evidence to the PREVIOUS run's content. The flat <id>.json paths became
+    # TRACKED after the first run's force-commit; a re-run's fresh evidence
+    # was then staged by per-plant `git add -A` and REVERTED to the old
+    # content by the finally's `reset --hard <snapshot>` (scores described
+    # run N while the files held run N-1 — the R15f+ "durable evidence"
+    # promise was broken on every re-run).
+    print("\n== T30: run-stamped evidence survives re-runs (git mechanics) ==")
+    src30 = Path(CTXOWN).read_text()
+    check("eval writes evidence to run-<stamp> dirs (source guard)",
+          'run_dir = EVAL_DIR / "plants" / f"run-{run_stamp}"' in src30,
+          "evidence paths must be run-stamped")
+    check("evidence commit in the finally is non-fatal (source guard)",
+          'git_mut("add", "-f"' not in src30.split("def cmd_eval")[1],
+          "the finally must use plain git() with a warning, never fail()")
+    import tempfile as _tf30, shutil as _sh30
+    _t30 = _tf30.mkdtemp(prefix="t30-evrepro-")
+    try:
+        def _g(*a):
+            return subprocess.run(["git", "-C", _t30] + list(a),
+                                  capture_output=True, text=True)
+        _g("init", "-q", "-b", "main")
+        _g("config", "user.email", "t@t"); _g("config", "user.name", "t")
+        Path(_t30, "corpus").mkdir()
+        Path(_t30, "corpus", "doc.md").write_text("v0\n")
+        _g("add", "-A"); _g("commit", "-qm", "base")
+        ev = Path(_t30, "eval", "plants")
+        # --- run 1: flat-path evidence, force-committed (the old scheme) ---
+        ev.mkdir(parents=True)
+        (ev / ".gitignore").write_text("*\n!.gitignore\n")
+        (ev / "P1.json").write_text('{"run": 1}')
+        _g("add", "-A")                                # per-plant sweep
+        _g("add", "-f", "eval/plants")
+        _g("commit", "-qm", "evidence r1")
+        snap = _g("rev-parse", "HEAD").stdout.strip()  # run 2's snapshot
+        # --- run 2 writes to a run-stamped dir (the new scheme) ---
+        (ev / ".gitignore").write_text("*\n!.gitignore\n")
+        run2 = ev / "run-2"
+        run2.mkdir()
+        (run2 / "P1.json").write_text('{"run": 2}')
+        _g("add", "-A")                                # per-plant sweep
+        _g("reset", "--hard", snap)                    # finally restore
+        check("re-run: fresh run-stamped evidence survives the restore",
+              Path(run2, "P1.json").read_text() == '{"run": 2}',
+              "run-2 evidence reverted by reset --hard")
+        check("re-run: previous run's evidence still present (durable)",
+              Path(ev, "P1.json").read_text() == '{"run": 1}',
+              "run-1 evidence lost")
+        # the OLD flat-path failure mode, demonstrated for contrast:
+        (ev / "P1.json").write_text('{"run": 3}')      # re-run on the FLAT path
+        _g("add", "-A"); _g("reset", "--hard", snap)
+        check("old flat path WOULD have reverted (the bug this fixes)",
+              Path(ev, "P1.json").read_text() == '{"run": 1}',
+              "tracked flat evidence must revert under the old scheme")
+    finally:
+        _sh30.rmtree(_t30, ignore_errors=True)
+
+    # T31 (regression, found live by the R17 audit): ports are guarded
+    # cross-project — a healthy FOREIGN listener must never be adopted as
+    # this project's server, and kill_listener must never signal a pid that
+    # is not an opencode serve (a stale pidfile whose pid was recycled by an
+    # innocent process used to get SIGTERM/SIGKILLed blindly). Found live:
+    # the pilot and the flagship BOTH recorded base 4200 on this box.
+    print("\n== T31: foreign-listener + recycled-pid guards ==")
+    src31 = Path(CTXOWN).read_text()
+    check("serve start adopts only attributed listeners (source guard)",
+          "if listener_is_ours(port):" in src31 and "already_running" in src31,
+          "adoption must check identity")
+    check("ensure_provider refuses foreign healthy listeners (source guard)",
+          "not this project's oc serve" in src31, "foreign adoption must fail closed")
+    check("kill_listener only signals opencode pids (source guard)",
+          "not opencode serves" in src31, "cmdline check before any kill")
+    check("init warns when the recorded range is occupied (source guard)",
+          "already in use" in src31 and "pick a free range" in src31,
+          "init-time occupancy warning")
+    _p31 = 4599   # an unused port (pidfile round-trip + fake-attribution tests)
+    pf31 = Path(f"/tmp/cov-serve-{_p31}.pid")
+    try:
+        pf31.write_text(json.dumps({"pid": 4242, "project": _t30}))
+        check("read_pid parses the JSON pidfile", cov.read_pid(_p31) == 4242,
+              "new format")
+        pf31.write_text("4242\n")
+        check("read_pid parses legacy plain-int pidfiles", cov.read_pid(_p31) == 4242,
+              "old format")
+        # behavior: kill_listener REFUSES a non-opencode pid (a live sleep)
+        sleeper = subprocess.Popen(["sleep", "60"])
+        try:
+            pf31.write_text(str(sleeper.pid))
+            killed31, detail31 = cov.kill_listener(_p31)
+            check("kill_listener refuses to kill a non-opencode pid",
+                  killed31 is False and "refusing to kill" in detail31,
+                  f"killed={killed31} detail={detail31}")
+            check("the innocent process survived the refusal",
+                  sleeper.poll() is None, "process was killed")
+        finally:
+            sleeper.terminate(); sleeper.wait()
+        # behavior: listener_is_ours checks the project TAG on the pidfile —
+        # a fake opencode-looking process (argv0 swapped) with a FOREIGN tag
+        # is rejected, with OUR tag accepted, legacy-untagged accepted.
+        faker = subprocess.Popen(["bash", "-c", "exec -a opencode-serve sleep 60"])
+        time.sleep(0.4)
+        try:
+            pf31.write_text(json.dumps({"pid": faker.pid, "project": "/nonexistent-project"}))
+            check("listener_is_ours: opencode pid tagged for ANOTHER project -> False",
+                  cov.listener_is_ours(_p31) is False, "project tag must be verified")
+            pf31.write_text(json.dumps({"pid": faker.pid, "project": str(PROJECT)}))
+            check("listener_is_ours: same pid tagged for THIS project -> True",
+                  cov.listener_is_ours(_p31) is True, "correct attribution accepted")
+            pf31.write_text(str(faker.pid))
+            check("listener_is_ours: legacy untagged opencode pid -> True (best effort)",
+                  cov.listener_is_ours(_p31) is True)
+        finally:
+            faker.terminate(); faker.wait()
+    finally:
+        pf31.unlink(missing_ok=True)
+
 finally:
     print("\n== restoring state ==")
     try:

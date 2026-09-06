@@ -39,6 +39,18 @@ def main():
         sys.exit(2)
 
     log = os.path.abspath(a.log)
+    # R17 (P2-11): validate the log path IN THE PARENT — a bad --log dir used
+    # to print ok:true here while the daemon silently _exit(1)'d (no log, no
+    # .rc — a hung-looking task that was never running).
+    try:
+        log_dir = os.path.dirname(log) or "."
+        os.makedirs(log_dir, exist_ok=True)
+        with open(log, "ab"):
+            pass
+    except Exception as e:
+        print(json.dumps({"ok": False,
+                          "error": f"--log path not writable: {log} ({e})"}))
+        sys.exit(2)
     pid = os.fork()
     if pid > 0:
         # Top parent: the intermediate child exits immediately after the
@@ -63,6 +75,16 @@ def main():
             print(f"detach: --cwd failed: {e}")
         open(log + ".rc", "w").write("126\n")
         os._exit(126)
+    # R17 (P2-11): remove STALE completion sidecars from an earlier run that
+    # reused this --log name — a leftover .rc reads as "finished" until the
+    # new run exits, exactly inverting the monitoring contract.
+    for side in (log + ".rc", log + ".pid"):
+        try:
+            os.unlink(side)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
     try:
         lf = open(log, "ab")
         os.dup2(lf.fileno(), 1)
