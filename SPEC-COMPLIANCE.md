@@ -45,7 +45,7 @@ README.
 | 8.4 | Standing review board: broadcast to ALL, fixed form, aggregator dedupes/ranks/drops-unquoted | **DONE** | `review`: ThreadPool fan-out to every leaf, 4-question form, aggregate_review [T11] |
 | 8.4 | Hierarchical aggregation must never become hierarchical sampling | **DONE** | `--agg hier`: squad compression + controller-owned conservation check; violation → pass-through [T22, T23; L — conservation caught a real compressor merge live] |
 | 8.5 | Build notes (glossary, full text, citation, scope-honesty, sha tracking, model allocation) | **DONE** | See 8.1-8.3 + flash-tier owners / strong-model builder split |
-| 8.6 | Falsifiable test: ~20 planted contradictions; three systems | **DONE** | 19 plants; eval v9 ran sharded vs coldgrep (TIE 6-6, 0 FP) [v9]; arm (b) chunk-RAG implemented (BM25 chunks + one cold prompt) and smoke-validated on P13 [L]. **The full 3-arm run is the remaining decisive experiment** |
+| 8.6 | Falsifiable test: ~20 planted contradictions; three systems | **DONE** | 19 plants; eval v9 ran sharded vs coldgrep (TIE 6-6, 0 FP) [v9]; arm (b) chunk-RAG implemented (BM25 chunks + one cold prompt) [L]. The decisive non-bridged 3-arm run on hermes (2026-09-02): **SHARDED_WINS** — sharded 6/6, coldgrep 3/6, RAG 3/6; compiled-memory plants caught 3/3 by sharded alone, 0/3 by both same-model baselines [L] |
 | 9 | Build sequence phases 1-4 | **PARTIAL** | Phase 1 (compiler + incremental path): DONE. Phase 2 (routing): DONE. Phase 3 (direct owner-to-owner): correctly not needed yet (no relay-demand in logs). Phase 4 (seam layer): GAP (code deployment) |
 | 10 | Failure modes instrumented | **PARTIAL** | Instrumented: confident stale answers (stale_guard), self-stale (write ladder), under-invalidation (R13 path fix), registry drift (`check` [T24]), transport errors (structured, honest-abort), empty-200 poisoning (R14 chain). Gaps: silent build loss audit, seam drift, co-change diff |
 | 11 | Validation experiments | see table below | |
@@ -56,6 +56,7 @@ README.
 |---|---|---|
 | Bundle vs. cold grep (accuracy + tokens to caller) | **GAP** | Closure: 20-question QA benchmark, both arms |
 | Planted-contradiction eval (doc set) | **DONE** | v9: TIE 6-6 on flash-tier, both arms pinned, 0 FP, corpus restored clean [v9] |
+| Non-bridged planted eval (hermes, 3 arms) | **DONE** | 2026-09-02: **SHARDED_WINS** — sharded 6/6, coldgrep 3/6, chunk-RAG 3/6, 0 FP, restored clean; compiled-memory plants (pre-state only in derived layers) 3/3 fleet-only [L] |
 | Absence-query benchmark | **PARTIAL** | The review board IS an absence query (each owner: "does anything I own contradict this?"); a dedicated 10-question benchmark with ground truth not run |
 | Amortisation check O(queries)→O(changes) | **GAP** | Closure: token ledger over 100 queries, both regimes |
 | Build-loss audit (second model lists omissions) | **GAP** | Cheap to run; not yet |
@@ -91,9 +92,11 @@ compression parallelism).
 
 What we have NOT run yet, ranked by value:
 
-1. ~~The full 3-arm eval~~ **DONE (2026-09-01)** — on the real hermes
-   corpus (results in ADOPTION-REPORT.md); the pilot-corpus 19-plant sweep
-   remains optional.
+1. ~~The full 3-arm eval~~ **DONE (2026-09-01)** — bridged round on the
+   real hermes corpus (results in ADOPTION-REPORT.md §6b); the decisive
+   non-bridged round landed 2026-09-02 (§6c: SHARDED_WINS — compiled-
+   memory plants caught 3/3 by the fleet alone); the pilot-corpus
+   19-plant sweep remains optional.
 2. **Bundle-vs-coldgrep QA benchmark** — the §11 go/no-go experiment the
    contradiction eval does not cover.
 3. **Build-loss audit** — the only way to see the failure serving owners
@@ -109,23 +112,25 @@ What we have NOT run yet, ranked by value:
 
 ## Verdict
 
-Per the spec's own falsifiability rule (§8.6): the model is **not yet
-validated as a detection-rate WIN** — and at real scale the picture has
-sharpened. The pilot (55K tokens, v9): TIE 6-6 with the sharded fleet
-uniquely catching P17 (a non-bridged absence plant, missed by coldgrep
-twice). The real-corpus eval (339K tokens / 64 owners, 2026-09-02):
-**TIE at 10/10 for both architectures, 8/10 for chunk-RAG** — every
-realistic drift plant was detected by BOTH the fleet and the coldgrep
-agent (realistic drift carries lexical bridges; grep follows them), with
-0 false positives and clean restore. The chunk-RAG arm's 2 misses are
-the clean negative control: retrieval without ownership knowledge does
-not know where authority lives. The remaining decisive experiment for
-§1.4 is NON-BRIDGED plants (semantic-only contradictions whose authority
-doc shares no distinctive token with the planted text) — a plant-authoring
-discipline, not a machinery gap.
+Per the spec's own falsifiability rule (§8.6): the model is **validated
+as a detection-rate win in one precisely-bounded class — and still
+honestly NOT as a general rate advantage.** The pilot (55K tokens, v9):
+TIE 6-6 with the sharded fleet uniquely catching P17 (a non-bridged
+absence plant, missed by coldgrep twice). The real-corpus bridged eval
+(339K tokens / 64 owners, 2026-09-02): **TIE at 10/10 for both
+architectures, 8/10 for chunk-RAG** — realistic drift carries lexical
+bridges, and grep follows them (0 false positives, clean restore). The
+decisive NON-BRIDGED round (same corpus, same day): **SHARDED_WINS —
+the compiled-memory plants, whose pre-state survives only in the owners'
+derived layers, were caught 3/3 by the fleet and 0/3 by both same-model
+baselines**, exactly as pre-registered; the discriminating findings
+quote the derived layers verbatim (ADOPTION-REPORT §6c). The chunk-RAG
+arm's bridged-round misses remain the clean negative control: retrieval
+without ownership knowledge does not know where authority lives — and
+when authority is not lexically mirrored at all, neither does grep.
 
 Where the model HAS earned its complexity on the record so far: the
-P17-class unique catch, the live staleness guarantee (self-invalidation
-fired in the write ladder AND the review board), the §7.7 write path,
-and 64-owner serving at 2x the pilot's proven scale (63/63 blast in
-25.8s; full board 856s).
+compiled-memory detection edge (P17 pilot; NP-4/5/6 hermes), the live
+staleness guarantee (self-invalidation fired in the write ladder AND
+the review board), the §7.7 write path, and 64-owner serving at 2x the
+pilot's proven scale (63/63 blast in 25.8s; full board 856s).
