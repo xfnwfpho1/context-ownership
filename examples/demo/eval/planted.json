@@ -1,0 +1,20 @@
+[
+ {
+  "id": "DEMO-1-bridged-reserve-floor",
+  "file": "docs/POWER.md",
+  "category": "bridged",
+  "note": "POWER.md drops the battery reserve floor from 25% to 15%. The old value is echoed verbatim in SAFETY.md ('Battery reserve floor of 25% is a hard safety limit') — grep('25%') crosses, so lexical tracing alone can find the contradiction.",
+  "find": "Never draw the battery below 25% reserve.",
+  "replace": "Never draw the battery below 15% reserve.",
+  "expect": "positive control — all three arms should catch this"
+ },
+ {
+  "id": "DEMO-2-semantic-pass-cadence",
+  "file": "docs/COMMS.md",
+  "category": "semantic-conversion",
+  "note": "COMMS.md restates the mission cadence as '3 satellite passes per day'; the authority is MISSION.md's 'every 8 hours'. grep('2 satellite passes') and grep('passes per day') cross to no numeric authority — the reviewer must convert 24h/8h = 3 to see the contradiction.",
+  "find": "station gets 3 satellite passes per day",
+  "replace": "station gets 2 satellite passes per day",
+  "expect": "unit conversion required; bridging is absent — grep on the planted phrasing does not cross to the authority"
+ }
+]

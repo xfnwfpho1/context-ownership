@@ -39,7 +39,9 @@ Design decisions mapped to the doc:
 
 Usage: ctxown.py <command> ... (see main() or --help)
 A PROJECT is any directory containing corpus/ (the owned doc tree).
-Select it with --project DIR or $CTXOWN_PROJECT; default = this script's dir.
+Select it with --project DIR or $CTXOWN_PROJECT; default resolution:
+env → the current working directory (if it contains corpus/) → this
+script's dir (back-compat: the pilot layout).
 Extracted from the battle-tested opencode-harness cov pilot (56-test suite,
 eval v9) and generalized; the pilot remains the reference deployment.
 """
@@ -94,6 +96,13 @@ def _resolve_project_dir():
     env = (os.environ.get("CTXOWN_PROJECT") or os.environ.get("COV_PROJECT"))
     if env and (Path(env) / "corpus").is_dir():
         return Path(env)
+    # cwd probe: `python3 ctxown.py <cmd>` run FROM a project dir must work
+    # without --project (found live: the eval's per-plant rebuild subprocess
+    # omitted --project, silently resolved to the LAYER repo — whose own
+    # dirty tree then refused the rebuild with a confusing error).
+    cwd = Path.cwd()
+    if (cwd / "corpus").is_dir():
+        return cwd
     return Path(__file__).resolve().parent
 
 PROJECT_DIR = _resolve_project_dir()
@@ -283,7 +292,11 @@ def start_zai_proxy():
         os.dup2(lf.fileno(), 1); os.dup2(lf.fileno(), 2)
         devnull = os.open("/dev/null", os.O_RDWR)
         os.dup2(devnull, 0)
-        os.execvp("node", ["node", str(ZAI_PROXY_SCRIPT)])
+        # ZAI_PROXY_FOREGROUND=1: this forked child IS the daemon — skip the
+        # proxy script's own self-daemonization (zai_proxy.mjs would spawn a
+        # detached copy and exit, adding a needless indirection).
+        os.execvpe("node", ["node", str(ZAI_PROXY_SCRIPT)],
+                   {**os.environ, "ZAI_PROXY_FOREGROUND": "1"})
     except Exception:
         os._exit(1)
 
@@ -2613,12 +2626,18 @@ def cmd_eval(args):
 
     def rebuild_now():
         """Per-plant rebuild subprocess — releases the writer lock around it
-        (the rebuild takes the lock itself), re-acquires after."""
+        (the rebuild takes the lock itself), re-acquires after.
+        MUST carry --project: without it the child falls back to env/cwd/
+        script-dir resolution and can rebuild (or refuse on) the WRONG repo
+        — found live on the demo deployment (the layer repo's own dirty
+        tree refused a rebuild of an unrelated, clean project)."""
         nonlocal _lock
         os.close(_lock)
         try:
-            return subprocess.run([sys.executable, __file__, "rebuild", "--no-llm"],
-                                  capture_output=True, text=True)
+            return subprocess.run(
+                [sys.executable, __file__, "rebuild", "--no-llm",
+                 "--project", str(PROJECT_DIR)],
+                capture_output=True, text=True)
         finally:
             _lock = single_writer_lock()
 
@@ -2660,6 +2679,7 @@ def cmd_eval(args):
     detections_rag = {}
     details = []
     fp_findings = 0
+    restored_ok = False
     try:
         for p in ground_truth:
             f = CORPUS_DIR / p["file"]
@@ -2750,6 +2770,16 @@ def cmd_eval(args):
             try:
                 pdir = EVAL_DIR / "plants"
                 pdir.mkdir(parents=True, exist_ok=True)
+                # R15f+ (defect found live on the demo deployment 2026-09-06):
+                # evidence used to be wiped by the finally-restore
+                # (`git clean -fd`) unless a wrapper committed it — hermes
+                # only kept its evidence because a RELAUNCH happened to
+                # sweep it into the eval-snapshot commit. The dir now
+                # self-ignores: `git add -A` sweeps during the run skip it,
+                # reset --hard never sees it, clean -fd (no -x) keeps it;
+                # the finally force-commits it on top of the restored
+                # snapshot so it is durable in git too.
+                (pdir / ".gitignore").write_text("*\n!.gitignore\n")
                 (pdir / f"{p['id']}.json").write_text(json.dumps({
                     "plant": p, "review": review,
                     "review_detects": hit,
@@ -2801,8 +2831,22 @@ def cmd_eval(args):
         subprocess.run([sys.executable, __file__, "--project", str(PROJECT_DIR),
                         "rebuild", "--no-llm"],
                        capture_output=True, text=True)
+        # Restore verification must happen BEFORE the evidence commit below:
+        # corpus_sha() is HEAD-based, and the evidence commit moves HEAD on
+        # top of the restored snapshot — computing it afterwards false-alarms
+        # restored_clean (found live on the demo deployment).
+        restored_ok = (corpus_sha() == clean_sha)
+        # R15f+: evidence survives the restore BY DESIGN now (it self-ignored
+        # during the run) — force-commit it on top of the restored snapshot
+        # so it is durable in git and immune to the next eval's clean.
+        try:
+            pdir = EVAL_DIR / "plants"
+            if pdir.is_dir() and any(pdir.iterdir()):
+                git_mut("add", "-f", str(pdir))
+                git_mut("commit", "-m", "eval evidence (R15f)", "--allow-empty")
+        except Exception:
+            pass
 
-    restored_ok = (corpus_sha() == clean_sha)
     n = len(detections_sharded)
     score = {"planted": n,
              "arms": arms,

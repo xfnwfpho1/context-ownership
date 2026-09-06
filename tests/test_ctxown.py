@@ -663,6 +663,44 @@ try:
     check("rag_detects: non-overlapping quote does not count", cov.rag_detects(miss, plant_t26) is False)
     check("rag_detects: no-contradiction answer is not a detection", cov.rag_detects(fp_shape, plant_t26) is False)
 
+    # T28 (regression, found live on the demo deployment 2026-09-06):
+    # the eval's per-plant rebuild subprocess omitted --project, so the
+    # child fell back to script-dir resolution and rebuilt (or refused on)
+    # the WRONG repo — the layer repo's own dirty tree refused a rebuild
+    # of an unrelated, clean project. Two structural guards:
+    print("\n== T28: subprocess --project carriage + cwd project resolution ==")
+    src = Path(CTXOWN).read_text()
+    check("eval rebuild_now subprocess carries --project (source guard)",
+          '"rebuild", "--no-llm",\n                 "--project", str(PROJECT_DIR)' in src,
+          "rebuild_now argv must pin the CURRENT project")
+    import ctxown as _cov_mod2
+    _saved_env = {k: os.environ.get(k) for k in ("CTXOWN_PROJECT", "COV_PROJECT")}
+    import tempfile
+    _t28 = tempfile.mkdtemp(prefix="t28-cwd-probe-")
+    try:
+        os.environ.pop("CTXOWN_PROJECT", None)
+        os.environ.pop("COV_PROJECT", None)
+        # cwd-with-corpus must win over the script-dir fallback
+        Path(_t28, "corpus").mkdir()
+        os.chdir(_t28)
+        resolved = _cov_mod2._resolve_project_dir()
+        check("default resolution prefers a cwd that contains corpus/",
+              str(resolved) == _t28, f"resolved={resolved} expected cwd {_t28}")
+        # cwd WITHOUT corpus/ falls back to the script dir (back-compat)
+        os.chdir(str(Path(CTXOWN).parent))
+        resolved2 = _cov_mod2._resolve_project_dir()
+        check("cwd without corpus/ falls back to the script dir",
+              str(resolved2) == str(Path(CTXOWN).parent), f"resolved={resolved2}")
+    finally:
+        os.chdir(str(PROJECT))
+        for k, v in _saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        import shutil as _sh
+        _sh.rmtree(_t28, ignore_errors=True)
+
 finally:
     print("\n== restoring state ==")
     try:

@@ -1,0 +1,10 @@
+# transient run logs (detach.py sidecars) — never commit these
+*.log
+*.log.pid
+*.log.rc
+*.pid
+*.rc
+# machine-local serving state (ports/pids of THIS container) — transient;
+# committing it just dirties the tree on every serve start/stop
+.ctxown-state.json
+.ctxown.lock

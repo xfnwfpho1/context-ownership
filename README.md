@@ -31,6 +31,10 @@ loop that tells the compiler what to rebuild.
 
 ## Quickstart
 
+**First time?** Walk the 5-minute toy deployment first:
+[`examples/demo/`](examples/demo/README.md) (7 owners, 2 pre-authored
+plants, free/keyless provider, $0).
+
 A *project* is any directory containing `corpus/` (with `corpus/docs/*.md`
 and a shared `corpus/glossary.md`), inside a git repo.
 
@@ -76,7 +80,7 @@ Design rules that are load-bearing and enforced in code:
 ## Tests
 
 ```bash
-python3 tests/test_ctxown.py   # deterministic, no LLM calls (74 checks;
+python3 tests/test_ctxown.py   # deterministic, no LLM calls (81 checks;
                                # +2 live-server checks when a server is up)
 ```
 
@@ -84,8 +88,10 @@ python3 tests/test_ctxown.py   # deterministic, no LLM calls (74 checks;
 
 ```
 ctxown.py               the controller (single file, stdlib only)
-tests/test_ctxown.py    deterministic regression + capability suite
-examples/pilot/         pointer to the reference deployment
+tests/test_ctxown.py    deterministic regression + capability suite (81 checks)
+scripts/detach.py        double-fork runner — long steps (build/eval) MUST run detached
+examples/demo/           runnable toy deployment: 5-minute walkthrough, 2 plants
+examples/pilot/          pointer to the reference deployment
 ARCHITECTURE.md         the E2E system as it actually runs (components, flows, eval mechanics)
 RUNBOOK.md              operating procedures: cold start, servers, build, eval, failure playbook
 SPEC-COMPLIANCE.md      every spec section -> status -> evidence
