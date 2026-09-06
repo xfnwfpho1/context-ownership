@@ -37,6 +37,13 @@ remotes and `/home/sync`. Recovery ladder, verified end-to-end on
 5. **Serving**: `python3 $CTXOWN --project HP serve start` (probe-driven);
    confirm with `serve status` + one single-owner ask.
 
+The 4-step cold-start order (setup → keyless proxy → doctor → pulls)
+and the fresh-context procedure live in `skills/oc-agent-fleet/SKILL.md`
+— validated FRICTIONLESS by blind fresh-agent rounds (2026-09-06,
+~3.5 min measured recovery). Ports are a RECORDED project property:
+serve/status/stop/ask resolve the shared server from the registry's
+`base_port`, not from the current shell's `COV_BASE_PORT`.
+
 Known cold-start traps: file-mode drift on kit scripts after restore
 (`chmod +x` what setup.sh wrote); `OC_STATE_DIR` defaulting to `/tmp`
 (wiped) — set it to a durable path before long detached tasks.

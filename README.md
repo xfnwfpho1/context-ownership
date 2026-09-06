@@ -33,7 +33,10 @@ loop that tells the compiler what to rebuild.
 
 **First time?** Walk the 5-minute toy deployment first:
 [`examples/demo/`](examples/demo/README.md) (7 owners, 2 pre-authored
-plants, free/keyless provider, $0).
+plants, free/keyless provider, $0). Deploying from a fresh context (new
+agent, new session)? Start from the deployment skill:
+[`skills/oc-agent-fleet/SKILL.md`](skills/oc-agent-fleet/SKILL.md) —
+validated FRICTIONLESS by blind fresh-agent usability rounds.
 
 A *project* is any directory containing `corpus/` (with `corpus/docs/*.md`
 and a shared `corpus/glossary.md`), inside a git repo.
@@ -80,7 +83,7 @@ Design rules that are load-bearing and enforced in code:
 ## Tests
 
 ```bash
-python3 tests/test_ctxown.py   # deterministic, no LLM calls (81 checks;
+python3 tests/test_ctxown.py   # deterministic, no LLM calls (85 checks;
                                # +2 live-server checks when a server is up)
 ```
 
@@ -88,8 +91,9 @@ python3 tests/test_ctxown.py   # deterministic, no LLM calls (81 checks;
 
 ```
 ctxown.py               the controller (single file, stdlib only)
-tests/test_ctxown.py    deterministic regression + capability suite (81 checks)
+tests/test_ctxown.py    deterministic regression + capability suite (85 checks)
 scripts/detach.py        double-fork runner — long steps (build/eval) MUST run detached
+skills/oc-agent-fleet/   the deployment SKILL: a fresh-context agent's single entry point
 examples/demo/           runnable toy deployment: 5-minute walkthrough, 2 plants
 examples/pilot/          pointer to the reference deployment
 ARCHITECTURE.md         the E2E system as it actually runs (components, flows, eval mechanics)
