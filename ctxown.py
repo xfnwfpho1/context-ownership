@@ -1364,23 +1364,36 @@ def listener_is_ours(port):
     blindly — two projects sharing a range (found live: the pilot and the
     flagship both recorded base 4200) would adopt each other's servers, and
     ensure_provider's stale-key restart path could KILL a foreign project's
-    live server. Attribution: the pidfile (now JSON {pid, project}; legacy
+    live server.
+    Attribution: the pidfile (JSON {pid, project}). A TAGGED pidfile must
+    BOTH point at the pid that actually listens (ss) — a stale our-tagged
+    pidfile with a different opencode process on the port must NOT be
+    adopted (re-review 10-a) — AND carry this project's tag. Legacy
     plain-int pidfiles fall back to pid-alive + opencode-cmdline, the best
-    evidence available from before the tagging existed)."""
-    lp = listener_pid(port) or read_pid(port)
-    if not lp or not pid_alive(lp):
+    evidence available from before the tagging existed."""
+    lp = listener_pid(port)
+    fp = read_pid(port)
+    pid = lp or fp
+    if not pid or not pid_alive(pid):
         return False
-    if "opencode" not in _pid_cmdline(lp):
+    if "opencode" not in _pid_cmdline(pid):
         return False
+    tag = None
     pf = Path(f"/tmp/cov-serve-{port}.pid")
     if pf.exists():
         try:
             j = json.loads(pf.read_text().strip())
-            if isinstance(j, dict) and j.get("project"):
-                return Path(j["project"]).resolve() == PROJECT_DIR.resolve()
+            if isinstance(j, dict):
+                tag = j
         except Exception:
             pass
-    return True   # legacy/plain pidfile: opencode process, untagged — accept
+    if tag and tag.get("project") is not None:
+        if lp is not None and tag.get("pid") != lp:
+            return False   # stale our-tagged pidfile, different server listening
+        return Path(tag["project"]).resolve() == PROJECT_DIR.resolve()
+    # legacy/plain (or missing) pidfile: opencode process, untagged — accept
+    # as best effort (pre-R17 servers still deserve adoption/stop)
+    return True
 
 
 def pid_alive(pid):
@@ -1643,6 +1656,15 @@ def cmd_serve(args):
                 targets = [o]
         stopped = []
         for o in targets:
+            # R17c (re-review 10-a P2): serve stop must not kill a listener it
+            # cannot attribute to THIS project — the start/ensure paths refuse
+            # foreign listeners; stop used to SIGKILL them by port alone.
+            if server_healthy(o["port"]) and not listener_is_ours(o["port"]):
+                stopped.append({"server": o["id"], "port": o["port"],
+                                "stopped": False,
+                                "error": "healthy listener is not this project's "
+                                         "oc serve (foreign) — left untouched"})
+                continue
             killed, detail = kill_listener(o["port"])
             Path(f"/tmp/cov-serve-{o['port']}.pid").unlink(missing_ok=True)
             stopped.append({"server": o["id"], "port": o["port"],
@@ -2374,12 +2396,25 @@ def cmd_write(args):
         # (it takes its own lock — same pattern as the eval's rebuild_now).
         os.close(_wlock)
         try:
-            subprocess.run([sys.executable, __file__, "--project", str(PROJECT_DIR),
+            rb = subprocess.run([sys.executable, __file__, "--project", str(PROJECT_DIR),
                             "rebuild", "--no-llm"],
                            capture_output=True, text=True, cwd=str(PROJECT_DIR),
                            stdin=subprocess.DEVNULL, timeout=1800)
         finally:
             _wlock = single_writer_lock()
+        # R17c (re-review 10-a P2): the rebuild's outcome used to be
+        # DISCARDED — ok:true/written:true was printed even when the rebuild
+        # failed (newly reachable via the lock-release race) and the owner
+        # stayed stale. The eval checks its per-plant rebuild; the write
+        # ladder must check its own.
+        try:
+            rbd = json.loads(rb.stdout.strip().splitlines()[-1]) if rb.stdout.strip() else {}
+        except Exception:
+            rbd = {}
+        if rb.returncode != 0 or rbd.get("ok") is not True:
+            fail("write path: post-write rebuild failed (rc="
+                 + str(rb.returncode) + "): " + (rb.stdout or rb.stderr or "")[-300:],
+                 5, ladder=ladder)
         state2, _ = stale_guard(owner)
         verify = cov_ask_owner(args.owner,
                                f"Quote the exact passage in your owned document "
@@ -2390,6 +2425,11 @@ def cmd_write(args):
         ladder["steps"].append({"step": "rebuild", "state": state2,
                                 "verify_ok": knew_it,
                                 "verify_excerpt": vtext[:200]})
+        if not knew_it:
+            fail("write path: owner did not serve the new content after the "
+                 "rebuild (verify failed) — the write IS committed and the "
+                 "owner is stale; run ctxown.py rebuild and re-ask", 5,
+                 ladder=ladder)
     out_json({"ok": True, "ladder": ladder, "written": True})
 
 
