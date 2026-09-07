@@ -56,8 +56,11 @@ python3 /home/z/my-project/context-ownership/scripts/detach.py \
   --log eval.log --cwd . -- \
   python3 $CTXOWN --project . eval --arms all
 tail eval.log                          # poll: eval.log.rc appears when done
-ls eval/plants/                         # per-plant evidence survives the
-                                        # restore by design (R15f+)
+ls eval/plants/run-*/                  # per-plant evidence (RUN-STAMPED: each
+                                        # run gets its own run-<ts>/ dir —
+                                        # re-runs never revert earlier
+                                        # evidence) survives the restore by
+                                        # design (R15f+)
 ```
 
 ## What the eval will show

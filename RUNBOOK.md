@@ -103,8 +103,9 @@ Known cold-start traps: file-mode drift on kit scripts after restore
    (`scripts/launch_nonbridged_eval.py` pattern): double-fork, cost snapshots
    (OpenRouter `/api/v1/key` before/after), heartbeat + `result.json` +
    `stderr.log` + `DONE` under `/home/sync/<run-dir>/`.
-3. Monitor: corpus `git log` (plant/restore commits), `eval/plants/*.json`
-   (one per completed plant — full per-arm evidence), the run dir's
+3. Monitor: corpus `git log` (plant/restore commits), `eval/plants/run-<ts>/*.json`
+   (one per completed plant — full per-arm evidence; RUN-STAMPED dirs, so
+   re-runs never revert earlier evidence), the run dir's
    `eval.log`.
 4. **On rc=5 (honest abort)**: nothing is broken. The corpus self-restored
    (verify `git -C HP/corpus status` clean and HEAD at the run's
